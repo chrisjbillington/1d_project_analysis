@@ -1,0 +1,781 @@
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import h5py
+from tqdm import tqdm
+from image_reconstruction.cpu_reconstructor import CPUReconstructor
+
+raw_data_h5 = 'raw_data.h5'
+processed_data_h5 = 'processed_data.h5'
+
+# The number of images and the dimensions of each image:
+with h5py.File(raw_data_h5, 'r') as raw_data:
+    n_shots = raw_data['atoms'].shape[0]
+    image_shape = raw_data['atoms'].shape[1:]
+    # The number of values of the final_dipole variable:
+    n_realisations = len(set(raw_data['final_dipole']))
+
+# The ROI where the atoms are:
+ROI_x_start = 0
+ROI_x_stop = image_shape[1]
+ROI_y_start = 180
+ROI_y_stop = 255
+
+# A mask equal to zero in the ROI and ones elsewhere:
+ROI_mask = np.ones(image_shape)
+ROI_mask[ROI_y_start:ROI_y_stop, ROI_x_start:ROI_x_stop] = 0
+
+# Parameters for computing optical densities:
+Isat, alpha = 127.0, 0.92
+magnification =  6.66
+pixel_size = 5.6e-6
+dy = pixel_size / magnification
+lambda_Rb = 780.24e-9
+sigma_0 = 3*lambda_Rb**2 / (2 * np.pi)
+
+
+def gaussian_blur(image, px):
+    """gaussian blur an image by given number of pixels"""
+    from scipy.signal import convolve2d
+    x = np.arange(-4*px, 4*px + 1, 1)[None, :]
+    y = np.arange(-4*px, 4*px + 1, 1)[:, None]
+    kernel = np.exp(-(x**2 + y**2)/(2*px**2))
+    kernel /= kernel.sum()
+    return convolve2d(image, kernel, mode='same')
+
+
+def h5_save(group, name, array):
+    """Set a h5 dataset to the given array, replacing existing values if it
+    already exists. If the arrays do not have the same shape and datatype,
+    then delete the existing dataset before replaing it. This will leave
+    garbage in the h5 file that will need to be cleaned up if one wants to
+    reclaim the disk space with h5repack. Having to do this is the main
+    downside of using hdf5 for this instead of np.save/np.load/np.memmap"""
+    try:
+        group[name] = array
+    except RuntimeError:
+        try:
+            # Try overwriting just the data if shape and dtype are compatible:
+            group[name][:] = array
+        except TypeError:
+            del group[name]
+            group[name] = array
+            import sys
+            msg = ('Warning: replacing existing h5 dataset, but disk space ' +
+                   'has not been reclaimed, leaving the h5 file larger ' +
+                   'than necessary. To reclaim disk space use the h5repack ' +
+                   'tool or delete the whole h5 file regenerate from scratch\n')
+            sys.stderr.write(msg)
+
+
+def save_pca_images():
+    """Save images of principal components of all raw sets of images to disk
+    to see what they look like"""
+
+    def _save_pca_images(images, name, mask=None):
+        outdir = os.path.join('pca_images', name)
+        reconstructor = CPUReconstructor(max_ref_images=n_shots)
+        print(f'Saving {name} PCA images to {outdir}/')
+        if mask is None:
+            mask = np.ones(image_shape)
+        for image in tqdm(images, desc='  Adding ref images'):
+            reconstructor.add_ref_image(image * mask)
+        print("  Doing PCA")
+        mean_image, principal_components, evals = reconstructor.pca_images()
+        if not os.path.exists(outdir):
+            os.makedirs(outdir)
+
+        plt.semilogy(evals/evals.sum(), '-')
+        plt.xlabel('principal component number')
+        plt.ylabel('fractional variance explained')
+        plt.grid(True)
+        plt.savefig(os.path.join(outdir, 'explained_variance.png'))
+        plt.clf()
+
+        plt.plot(evals.cumsum()/evals.sum(), '-')
+        plt.xlabel('principal component number')
+        plt.ylabel('cumulative fractional variance explained')
+        plt.grid(True)
+        plt.savefig(os.path.join(outdir, 'explained_variance_cumulative.png'))
+        plt.clf()
+
+        plt.imsave(os.path.join(outdir, 'mean_image.png'), mean_image)
+        for i, image in tqdm(enumerate(principal_components),
+                             desc='  Saving images', total=len(principal_components)):
+            plt.imsave(os.path.join(outdir, f'principal_component_{i:04d}.png'), image)
+
+    # Do this for each set of raw images:
+    with h5py.File(raw_data_h5, 'r') as raw_data:
+        _save_pca_images(raw_data['probe'], 'probe')
+        _save_pca_images(raw_data['dark'], 'dark')
+        _save_pca_images(raw_data['dark'], 'atoms', ROI_mask)
+
+
+def compute_mean_raw_images():
+    """Compute the mean atoms, probe and dark frame and save to file"""
+    outdir = 'mean_raw_images'
+    if not os.path.exists(outdir):
+        os.mkdir(outdir)
+
+    print('Computing mean raw images')
+    with h5py.File(raw_data_h5, 'r') as raw_data:
+        with h5py.File(processed_data_h5) as processed_data:
+            print('  Computing mean atoms frame')
+            mean_raw_atoms = np.mean(raw_data['atoms'], axis=0)
+            h5_save(processed_data, 'mean_raw_atoms', mean_raw_atoms)
+            plt.imshow(mean_raw_atoms)
+            plt.colorbar()
+            plt.savefig(os.path.join(outdir, 'mean_raw_atoms.png'))
+            plt.clf()
+
+            print('  Computing mean probe frame')
+            mean_raw_probe = np.mean(raw_data['probe'], axis=0)
+            h5_save(processed_data, 'mean_raw_probe', mean_raw_probe)
+            plt.imshow(mean_raw_probe)
+            plt.colorbar()
+            plt.savefig(os.path.join(outdir, 'mean_raw_probe.png'))
+            plt.clf()
+
+            print('  Computing mean dark frame')
+            mean_raw_dark = np.mean(raw_data['dark'], axis=0)
+            h5_save(processed_data, 'mean_raw_dark', mean_raw_dark)
+            plt.imshow(mean_raw_dark)
+            plt.colorbar()
+            plt.savefig(os.path.join(outdir, 'mean_raw_dark.png'))
+            plt.clf()
+
+
+def compute_dark_systematic_offset():
+    """Compute an array that models the systematic difference in counts
+   between the mean atoms and probe images, which we attribute to a systematic
+   difference in dark counts between the frames"""
+    
+    def model_inhomogeneous_dark(gamma, y0, x0, sigma_x, delta, epsilon):
+        """Extra dark counts present in the mean probe frame but not in the
+        mean atoms frame, as a fitted model"""
+        y = np.linspace(0, image_shape[0]-1, image_shape[0])[:, None] + np.ones(image_shape[1])[None, :]
+        x = np.linspace(0, image_shape[1]-1, image_shape[1])[None, :] + np.ones(image_shape[0])[:, None]
+        y_structure = gamma**2 / (y - y0)**2
+        x_structure =  (x - x0) * (delta * np.exp(-(x - x0)**2/(2*sigma_x**2)) - epsilon**2 *(x -x[0, -1])**2)
+        return y_structure + x_structure 
+
+    def model_homogeneous_dark(beta):
+        """Extra dark counts present in the mean atoms frame but not in the
+        mean probe frame, as a fraction of the dark frame"""
+        return beta * mean_raw_dark
+
+    def model_scaled_probe(alpha):
+        """Extra probe counts obtained by adding a multiple of (mean_raw_probe -
+        mean_raw_dark) to the mean probe frame."""
+        return mean_raw_probes + alpha * (mean_raw_probes - mean_raw_dark)
+
+    def errfunc(args):
+        """Error function for least squares fitting"""
+        alpha, beta, gamma, y0, x_0, delta, sigma_x, epsilon = args
+
+        scaled_and_offset_probe = model_scaled_probe(alpha) + model_homogeneous_dark(beta)
+        extra_inhomogeneous_dark = model_inhomogeneous_dark(gamma, y0, x_0, delta, sigma_x, epsilon)
+        residual_inhomogeneous_dark = scaled_and_offset_probe - mean_raw_atoms
+
+        model_probe = scaled_and_offset_probe - extra_inhomogeneous_dark
+
+        return ((model_probe - mean_raw_atoms) * ROI_mask).flatten()
+
+    print('Computing model for systematic offset in dark counts')
+    outdir = 'dark_systematic_offset'
+    if not os.path.exists(outdir):
+        os.mkdir(outdir)
+
+    with h5py.File(processed_data_h5) as processed_data:
+        mean_raw_probes = processed_data['mean_raw_probe'][:]
+        mean_raw_atoms = processed_data['mean_raw_atoms'][:]
+        mean_raw_dark = processed_data['mean_raw_dark'][:]
+
+        raw_difference = mean_raw_probes - mean_raw_atoms
+
+        from scipy.optimize import leastsq
+        (alpha, beta, gamma, y0, x_0, delta, sigma_x, epsilon), res = leastsq(errfunc, [0.0273, 0.00198, 97.9, -81.1, 32.5, 92.7, -0.0016, 3.45e-5])
+
+        # Compute the modelled systematic difference and save to file:
+        scaled_difference = model_scaled_probe(alpha) - mean_raw_atoms
+        scaled_and_offset_difference = model_scaled_probe(alpha) + model_homogeneous_dark(beta) - mean_raw_atoms
+        corrected_difference = model_scaled_probe(alpha) + model_homogeneous_dark(beta) - model_inhomogeneous_dark(gamma, y0, x_0, delta, sigma_x, epsilon) - mean_raw_atoms
+        dark_systematic_offset = model_homogeneous_dark(beta) - model_inhomogeneous_dark(gamma, y0, x_0, delta, sigma_x, epsilon)
+        h5_save(processed_data, 'dark_systematic_offset', dark_systematic_offset)
+
+
+    # Plot the inhomogeneous part of the fit:
+    scaled_and_offset_probe = model_scaled_probe(alpha) + model_homogeneous_dark(beta)
+    extra_inhomogeneous_dark = model_inhomogeneous_dark(gamma, y0, x_0, delta, sigma_x, epsilon)
+    residual_inhomogeneous_dark = scaled_and_offset_probe - mean_raw_atoms
+
+    plt.plot((residual_inhomogeneous_dark * ROI_mask).mean(1), label='averaged over x (data)')
+    plt.plot((extra_inhomogeneous_dark * ROI_mask).mean(1), label='averaged over x (model)')
+    plt.plot((residual_inhomogeneous_dark * ROI_mask).mean(0), label='averaged over y (data)')
+    plt.plot((extra_inhomogeneous_dark * ROI_mask).mean(0), label='averaged over y (model)')
+    plt.grid(True)
+    plt.legend()
+    plt.xlabel('x or y pixel number')
+    plt.ylabel('counts')
+    plt.savefig(os.path.join(outdir, 'inhomogeneous_fit.png'))
+    plt.clf()
+
+
+    # Plot the effect of this on the average differences over x and y:
+    plt.plot(raw_difference.mean(axis=1), label='raw')
+    plt.plot(scaled_difference.mean(axis=1), label=f'raw scaled')
+    plt.plot(scaled_and_offset_difference.mean(axis=1), label=f'raw scaled + const*dark')
+    plt.plot(corrected_difference.mean(axis=1), label=f'raw scaled + model')
+
+    plt.axvline(ROI_y_start, linestyle='--', color='k')
+    plt.axvline(ROI_y_stop, linestyle='--', color='k')
+
+    plt.legend()
+    plt.grid(True)
+    plt.ylabel('mean counts difference along y')
+    plt.xlabel('y pixel numer')
+    plt.savefig(os.path.join(outdir, 'difference_y_lineouts.png'))
+    plt.clf()
+
+    plt.plot((raw_difference).mean(axis=0), label=f'raw')
+    plt.plot((scaled_difference).mean(axis=0), label=f'raw scaled')
+    plt.plot((scaled_and_offset_difference).mean(axis=0), label=f'raw scaled + const*dark')
+    plt.plot((corrected_difference).mean(axis=0), label=f'raw scaled + model')
+
+    plt.legend()
+    plt.grid(True)
+    plt.ylabel('mean counts difference along x')
+    plt.xlabel('x pixel number')
+    plt.savefig(os.path.join(outdir, 'difference_x_lineouts.png'))
+    plt.clf()
+
+
+    # Plot blurred and unblurred 2D images of the scaled + offset differences,
+    # the difference after correcting with the model, and the inhomogeneous part
+    # of the model:
+
+    plt.imshow(scaled_and_offset_difference, vmin=-1, vmax=1, cmap='seismic')
+    plt.colorbar()
+    plt.savefig(os.path.join(outdir, 'scaled_and_offset_difference.png'))
+    plt.clf()
+
+    plt.imshow(gaussian_blur(scaled_and_offset_difference, 5), vmin=-1, vmax=1, cmap='seismic')
+    plt.colorbar()
+    plt.savefig(os.path.join(outdir, 'scaled_and_offset_difference_blurred.png'))
+    plt.clf()
+
+    plt.imshow(corrected_difference, vmin=-1, vmax=1, cmap='seismic')
+    plt.colorbar()
+    plt.savefig(os.path.join(outdir, 'corrected_difference.png'))
+    plt.clf()
+
+    plt.imshow(gaussian_blur(corrected_difference, 5), vmin=-1, vmax=1, cmap='seismic')
+    plt.colorbar()
+    plt.savefig(os.path.join(outdir, 'corrected_difference_blurred.png'))
+    plt.clf()
+
+    plt.imshow(dark_systematic_offset, vmin=-1, vmax=1, cmap='seismic')
+    plt.colorbar()
+    plt.savefig(os.path.join(outdir, 'dark_systematic_offset.png'))
+    plt.clf()
+
+
+def reconstruct_probe_frames():
+    """Reconstruct a probe frame for each atoms frame by modelling each atoms
+    frame to a linear sum of all probe frames in the unmasked region, plus a
+    multiple of our modelled systematic difference in dark counts. Save the
+    coefficient of the fit for the systematic dark counts for later use in
+    reconstructing dark frames"""
+
+    print('Reconstructing probe frames')
+    with h5py.File(raw_data_h5, 'r') as raw_data:
+        with h5py.File(processed_data_h5) as processed_data:
+            raw_atoms_images = raw_data['atoms']
+            raw_probe_images = raw_data['probe']
+            dark_systematic_offset = processed_data['dark_systematic_offset'][:]
+
+            reconstructor = CPUReconstructor(max_ref_images=n_shots+1)
+
+            for raw_probe_image in tqdm(raw_probe_images, desc='  Adding ref images'):
+                reconstructor.add_ref_image(raw_probe_image)
+
+            # Allow the reconstructor to use any scalar multiple of the mean
+            # systematic offset in the reconstruction. We will extract the coefficient
+            # of the reconstruction so that this can be treated as dark counts when we
+            # later reconstruct dark frames:
+            reconstructor.add_ref_image(dark_systematic_offset[:])
+
+            reconstructed_probe_frames = np.zeros(raw_atoms_images.shape)
+            dark_systematic_offset_coeffs = np.zeros(n_shots)
+
+            for i, frame in tqdm(enumerate(raw_atoms_images), 
+                                 desc='  Reconstructing', total=len(raw_atoms_images)):
+                reconstructed_probe, rchi2, coeffs = reconstructor.reconstruct(frame, mask=ROI_mask, return_coeffs=True)
+                reconstructed_probe_frames[i] = reconstructed_probe
+                # How much of the modelled dark counts systematic offset was in this frame? 
+                dark_systematic_offset_coeffs[i] = coeffs[-1]
+
+            h5_save(processed_data, 'reconstructed_probe', reconstructed_probe_frames)
+            h5_save(processed_data, 'dark_systematic_offset_coeffs', dark_systematic_offset_coeffs)
+
+
+def plot_reconstructed_probe_frames():
+    """Save to disk images of the raw probes, raw atoms and reconstructed probes for comparison"""
+
+    print("Saving reconstructed probe images")
+
+    outdir = 'reconstructed_probe'
+    if not os.path.exists(outdir):
+        os.mkdir(outdir)
+    with h5py.File(raw_data_h5, 'r') as raw_data:
+        with h5py.File(processed_data_h5) as processed_data:
+            raw_atoms_images = raw_data['atoms']
+            raw_probe_images = raw_data['probe']
+            reconstructed_probe_frames = processed_data['reconstructed_probe']
+            for i in tqdm(range(len(raw_atoms_images)),  desc='  Saving images'):
+                raw_atoms = raw_atoms_images[i]
+                raw_probe = raw_probe_images[i]
+                recon_probe = reconstructed_probe_frames[i]
+                vmin = min(raw_atoms.min(), raw_probe.min(), recon_probe.min())
+                vmax = max(raw_atoms.max(), raw_probe.max(), recon_probe.max())
+                plt.imsave(os.path.join(outdir, f'{i:04d}_1_raw_probe.png'), raw_probe, vmin=vmin, vmax=vmax)
+                plt.imsave(os.path.join(outdir, f'{i:04d}_2_raw_atoms.png'), raw_atoms, vmin=vmin, vmax=vmax)
+                plt.imsave(os.path.join(outdir, f'{i:04d}_3_recon_probe.png'), recon_probe, vmin=vmin, vmax=vmax)
+
+
+def reconstruct_dark_frames():
+    """Reconstruct a dark frame for each atoms frame. Each reconstructed dark
+    frame is the mean dark frame, plus a multiple of the systematic dark
+    offset with coefficient determined by the least squares reconstruction
+    during the probe reconstruction step, plus a multiple of each of principal
+    components 4 and 5 of the probe frames (which we are taking to be readout
+    noise since they appear identically in the principal components of the
+    dark frames), with coefficients determined by the projection of the atoms
+    frame onto those principal components in the unmasked region"""
+
+    print("Reconstructing dark frames")
+
+    with h5py.File(raw_data_h5, 'r') as raw_data:
+        with h5py.File(processed_data_h5) as processed_data:
+            mean_raw_dark = processed_data['mean_raw_dark']
+            dark_systematic_offset = processed_data['dark_systematic_offset']
+            dark_systematic_offset_coeffs = processed_data['dark_systematic_offset_coeffs']
+
+            raw_atoms_images = raw_data['atoms']
+            raw_probe_images = raw_data['probe']
+
+            reconstructor = CPUReconstructor(max_ref_images=n_shots)
+            for probe in tqdm(raw_probe_images, desc='  Adding ref images'):
+                reconstructor.add_ref_image(probe)
+
+            print('  Doing PCA')
+
+            # The principal components we wish to count as dark:
+            mean_image, principal_components, evals = reconstructor.pca_images()
+            pc4, pc5 = principal_components[4], principal_components[5]
+            del principal_components
+
+            reconstructed_dark_frames = np.zeros(raw_atoms_images.shape)
+
+            for i, frame in tqdm(enumerate(raw_atoms_images), 
+                                 desc='  Reconstructing', total=len(raw_atoms_images)):
+                _, _, coeffs = reconstructor.reconstruct(frame, mask=ROI_mask, n_principal_components=10,
+                                                                return_coeffs=True)
+                dark_systematic_offset_coeff = dark_systematic_offset_coeffs[i]
+                offset = dark_systematic_offset_coeff * dark_systematic_offset
+                reconstructed_dark = mean_raw_dark + offset + coeffs[4] * pc4 + coeffs[5] * pc5
+
+                reconstructed_dark_frames[i] = reconstructed_dark
+
+            h5_save(processed_data, 'reconstructed_dark', reconstructed_dark_frames)
+
+
+def plot_reconstructed_dark_frames():
+    """Save to disk images of the reconstructed dark frames"""
+
+    print("Saving reconstructed dark images")
+
+    outdir = 'reconstructed_dark'
+    if not os.path.exists(outdir):
+        os.mkdir(outdir)
+
+    with h5py.File(processed_data_h5) as processed_data:
+        reconstructed_dark_frames = processed_data['reconstructed_dark']
+        for i in tqdm(range(len(reconstructed_dark_frames)),  desc='  Saving images'):
+            frame = reconstructed_dark_frames[i]
+            plt.imsave(os.path.join(outdir, f'{i:04d}.png'), frame)
+
+
+def compute_OD_and_absorption_and_saturation_fractions():
+    """Compute the OD corresponding to each image, as well as the absorbed
+    fraction and saturation coefficient. Note that due to imaging aberrations
+    the OD is not particularly physically meaningful, but we compute it
+    anyway, partly so we can compare with the more physically meaningful
+    results after other processing."""
+
+    print("Computing naive OD, absorbed fraction and saturation coefficient")
+
+    with h5py.File(raw_data_h5, 'r') as raw_data:
+        with h5py.File(processed_data_h5) as processed_data:
+            raw_atoms_frames = raw_data['atoms']
+            reconstructed_dark_frames = processed_data['reconstructed_dark']
+            reconstructed_probe_frames = processed_data['reconstructed_probe']
+
+            OD = np.zeros(raw_atoms_frames.shape)
+            absorbed_fraction = np.zeros(raw_atoms_frames.shape)
+            saturation_coefficient = np.zeros(raw_atoms_frames.shape)
+
+            zipvars = zip(raw_atoms_frames, reconstructed_probe_frames, reconstructed_dark_frames)
+            for i, (atoms, probe, dark) in tqdm(enumerate(zipvars), total=n_shots):
+                absorbed_fraction_i = 1 - (atoms - dark)/(probe - dark)
+                saturation_coefficient_i = (probe - dark) / Isat
+
+                OD[i] = -alpha * np.log(1 - absorbed_fraction_i) + saturation_coefficient_i * absorbed_fraction_i
+                absorbed_fraction[i] =  absorbed_fraction_i
+                saturation_coefficient[i] = saturation_coefficient_i
+
+            h5_save(processed_data, 'OD', OD)
+            h5_save(processed_data, 'absorbed_fraction', absorbed_fraction)
+            h5_save(processed_data, 'saturation_coefficient', saturation_coefficient)
+
+
+def plot_OD_and_absorption_and_saturation_fractions():
+    """Save to disk images of the OD"""
+    print("Saving naive OD images, and abosrption and saturation images")
+
+    outdir_OD = 'naive_OD'
+    if not os.path.exists(outdir_OD):
+        os.mkdir(outdir_OD)
+    outdir_absorbed_fraction = 'absorbed_fraction'
+    if not os.path.exists(outdir_absorbed_fraction):
+        os.mkdir(outdir_absorbed_fraction)
+    outdir_saturation_coefficient = 'saturation_coefficient'
+    if not os.path.exists(outdir_saturation_coefficient):
+        os.mkdir(outdir_saturation_coefficient)
+
+    with h5py.File(processed_data_h5) as processed_data:
+        OD = processed_data['OD']
+        absorbed_fraction = processed_data['absorbed_fraction']
+        saturation_coefficient = processed_data['saturation_coefficient']
+        for i in tqdm(range(len(OD)),  desc='  Saving images'):
+            plt.imsave(os.path.join(outdir_OD, f'{i:04d}.png'), OD[i], vmin=-1, vmax=1, cmap='seismic')
+            plt.imsave(os.path.join(outdir_absorbed_fraction, f'{i:04d}.png'), absorbed_fraction[i], vmin=-1, vmax=1, cmap='seismic')
+            plt.imsave(os.path.join(outdir_saturation_coefficient, f'{i:04d}.png'), saturation_coefficient[i], vmin=-1, vmax=1, cmap='seismic')
+
+
+def compute_averages():
+    """Average the (naive) ODs of each set of shots that are from the same
+    point in parameter space (realisation) to produce a mean OD image for each
+    point in the parameter space. Average is computed as:
+        -alpha * log (1 - <A>) + <R> * <A>
+    where <A> is the mean of the absorbed fractions and <R> is the mean of
+    the saturation coefficient. The mean of the absorbed fractions is taken
+    before the log to avoid biasing the result toward higher ODs, since the
+    log of a Gaussian random variable has asymmetric uncertainties and cannot
+    be simply averaged together to obtain an unbiased estimate of the most
+    likely value.
+
+    Also and more importantly, compute the mean absorbed fraction for each
+    realisation and mean saturation coefficient"""
+
+    print("Computing average OD, absorbed_fraction and saturation coefficient for each final_dipole")
+
+    outdir_OD = 'average_naive_OD'
+    if not os.path.exists(outdir_OD):
+        os.mkdir(outdir_OD)
+    outdir_absorbed_fraction = 'average_absorbed_fraction'
+    if not os.path.exists(outdir_absorbed_fraction):
+        os.mkdir(outdir_absorbed_fraction)
+    outdir_saturation_coefficient = 'average_saturation_coefficient'
+    if not os.path.exists(outdir_saturation_coefficient):
+        os.mkdir(outdir_saturation_coefficient)
+
+    with h5py.File(raw_data_h5, 'r') as raw_data:
+        dipoles = raw_data['final_dipole'][:]
+
+    with h5py.File(processed_data_h5) as processed_data:
+        absorbed_fraction = processed_data['absorbed_fraction']
+        saturation_coefficient = processed_data['saturation_coefficient']
+
+        average_OD = np.zeros((len(set(dipoles)), *image_shape))
+        average_absorbed_fraction = np.zeros(average_OD.shape)
+        average_saturation_coefficient = np.zeros(average_OD.shape)
+
+        sorted_dipoles = sorted(set(dipoles))
+        for i, dipole_val in tqdm(enumerate(sorted_dipoles), total=len(set(dipoles)), desc='  Saving images'):
+
+            mean_absorbed_fraction = absorbed_fraction[dipoles == dipole_val, :, :].mean(axis=0)
+            mean_saturation_coefficient = saturation_coefficient[dipoles == dipole_val, :, :].mean(axis=0)
+            average_OD_i = -alpha * np.log(1 - mean_absorbed_fraction) + mean_saturation_coefficient * mean_absorbed_fraction
+
+            average_OD[i] = average_OD_i
+            average_absorbed_fraction[i] = mean_absorbed_fraction
+            average_saturation_coefficient[i] = mean_saturation_coefficient
+
+            plt.imsave(os.path.join(outdir_OD, f'{i:02d}.png'), average_OD_i, vmin=-1, vmax=1, cmap='seismic')
+            plt.imsave(os.path.join(outdir_absorbed_fraction, f'{i:02d}.png'), mean_absorbed_fraction, vmin=-1, vmax=1, cmap='seismic')
+            plt.imsave(os.path.join(outdir_saturation_coefficient, f'{i:02d}.png'), mean_saturation_coefficient, vmin=-1, vmax=1, cmap='seismic')
+
+        h5_save(processed_data, 'average_OD', average_OD)
+        h5_save(processed_data, 'average_absorbed_fraction', average_absorbed_fraction)
+        h5_save(processed_data, 'average_saturation_coefficient', average_saturation_coefficient)
+        h5_save(processed_data, 'sorted_final_dipoles', np.array(sorted_dipoles))
+    
+    
+
+def reconstruct_absorbed_fractions():
+    """Do dimensionality reduction on each vertical slice of the average
+    absorbed fractions in the ROI using a principal component basis based on
+    that slice and four surrounding slices in all averages ODs. The aim of
+    this is to reduce the noise present in each slice so that we can sum over
+    more pixels vertically before noise dominates the result. Sum the result
+    over y pixels in the ROI to get the reconstructed_total_absorbed_fraction
+    for each realisation"""
+
+    def get_reference_slices(slice_x_index):
+
+        # Get the reference images to be used for reconstructing a particular
+        # slice. This will be the slice we're reconstructing plus two slices
+        # from each side, unless we're too close to the left or right of the
+        # ROI in which case it will just be the nearest four other slices.
+        start_index = x_index - 2
+        stop_index = x_index + 3
+        # Where, relative to the start index, is the slice we are reconstructing?
+        offset = 2
+        while start_index < 0:
+            start_index += 1
+            stop_index += 1
+            offset -= 1
+        while stop_index >= ROI_x_stop - ROI_x_start:
+            start_index -= 1
+            stop_index -= 1
+            offset += 1
+
+        # The slices, shape (n_realisations, ROI_y_stop - ROI_y_start, 5) 
+        slices = average_absorbed_fraction_ROI[:, :, start_index:stop_index]
+
+        assert slices.shape[-1] == 5
+
+        # Transpose to get the vertical dimension first.
+        # Shape (ROI_y_stop - ROI_y_start, n_realisations, 5)
+        slices = slices.transpose((1, 0, 2))
+
+        # Flatten the last two dimensions so we have a
+        # (ROI_y_stop - ROI_y_start, 5*n_realisations) array:
+        slices = slices.reshape(ROI_y_stop - ROI_y_start, 5*n_realisations)
+
+        # Transpose again so we have each slice as a row.
+        # Shape (5*n_realisations, ROI_y_stop - ROI_y_start)
+        slices = slices.transpose()
+
+        # Delete the row corresponding to the slice we are going to reconstruct.
+        # Resulting shape: (94, 29):
+        # slices = np.delete(slices, image_index*5 + offset, axis=0)
+
+        # Verify for sure that the slice we're reconstructing is not in there:
+        # for i in range(94):
+        #     assert not np.array_equal(slices[i], data[image_index, :, x_index])
+
+        return slices
+
+    print('Reconstructing average absorbed fractions slice-by-slice in ROI')
+    with h5py.File(processed_data_h5) as processed_data:
+        average_absorbed_fraction = processed_data['average_absorbed_fraction']
+        average_absorbed_fraction_ROI = average_absorbed_fraction[:, ROI_y_start:ROI_y_stop, :]
+
+        n_principal_components = 4
+
+        # Reconstruct slice by slice:
+        reconstructed_average_absorbed_fraction_ROI = np.zeros(average_absorbed_fraction_ROI.shape)
+        reconstructed_total_absorbed_fraction = np.zeros((n_realisations, average_absorbed_fraction_ROI.shape[2]))
+
+        for x_index in tqdm(range(average_absorbed_fraction_ROI.shape[2]), desc='  Reconstructing slices'):
+            reference_slices = get_reference_slices(x_index)
+
+            # Make a reconstructor with this slice over all the shots as reference images:
+            reconstructor = CPUReconstructor(len(reference_slices), centered_PCA=False)
+            reconstructor.add_ref_images(reference_slices)
+
+            # Reconstruct this slice in each image:
+            for i in range(n_realisations):
+                target_slice = average_absorbed_fraction_ROI[i, :, x_index]
+                reconstructed_slice, rchi2 = reconstructor.reconstruct(target_slice,
+                                                 n_principal_components=n_principal_components)
+                reconstructed_average_absorbed_fraction_ROI[i, :, x_index] = reconstructed_slice
+                reconstructed_total_absorbed_fraction[i, x_index] = reconstructed_slice.sum(axis=0)
+
+        h5_save(processed_data, 'reconstructed_average_absorbed_fraction_ROI', reconstructed_average_absorbed_fraction_ROI)
+        h5_save(processed_data, 'reconstructed_total_absorbed_fraction', reconstructed_total_absorbed_fraction)
+
+        # plot them:
+        outdir_OD = 'reconstructed_average_absorbed_fraction'
+        if not os.path.exists(outdir_OD):
+            os.mkdir(outdir_OD)
+        outdir_colsums = 'reconstructed_absorbed_fraction_column_sums'
+        if not os.path.exists(outdir_colsums):
+            os.mkdir(outdir_colsums)
+        for i in tqdm(range(n_realisations), desc='  Saving images'):
+            image = average_absorbed_fraction_ROI[i]
+            reconstructed_image = reconstructed_average_absorbed_fraction_ROI[i]
+            both_images = np.concatenate((image, reconstructed_image, image - reconstructed_image), axis=0)
+            plt.imsave(os.path.join(outdir_OD, f'{i:04d}.png'), both_images, vmin=-0.5, vmax=0.5, cmap='seismic')
+
+            column_density_orig = image.sum(axis=0)
+            plt.plot(column_density_orig, linewidth=1.0, label='original')
+
+            column_density_recon = reconstructed_total_absorbed_fraction[i]
+            plt.plot(column_density_recon, label=f'uPCA{n_principal_components}', linewidth=1.0)
+
+            plt.axis([0, 648, -0.5, 3])
+            plt.xlabel('x pixel')
+            plt.ylabel('y sum of absorbed fraction in ROI')
+            plt.grid(True)
+            plt.legend()
+            plt.savefig(os.path.join(outdir_colsums, f'{i:04d}.png'))
+            plt.clf()
+
+
+def compute_max_absorption_saturation_coefficient():
+    """determine where the y position of maximum absorption of the
+    reconstructed absorbed_fractions is at each x position, and interpolate
+    the mean saturation coefficient to that point. This is done by simply
+    finding the quadratic curve that maximises the sum of all (interpolated)
+    absorbed fractions it passes through at each pixel adn each
+    realisation."""
+    with h5py.File(processed_data_h5) as processed_data:
+        A = processed_data['reconstructed_average_absorbed_fraction_ROI'][:]
+        x = np.indices((A.shape[2],))[0]
+        y = np.indices((A.shape[1],))[0]
+        R = processed_data['average_saturation_coefficient'][:, ROI_y_start:ROI_y_stop, ROI_x_start:ROI_x_stop]
+
+        from scipy.interpolate import interp1d
+        
+        # Sum over all realisations:
+        sum_A = A.sum(0)
+
+        def neg_sum_absorbed_fraction(args):
+            """Find the (interpolated) absorbed fraction passed through by a
+            curve y = a * x**2 + mx+c, summed over x and all realisations. Return it
+            multiplied by negative one for use with fmin"""
+            a, m, c = args
+            y0 = a*x**2 + m * x + c
+            total = 0
+            for x_index in x:
+                interpolator = interp1d(y, sum_A[:, x_index], fill_value=0, bounds_error=False)
+                sum_A_interp = interpolator(y0[x_index])
+                total += sum_A_interp
+            return -total
+
+        print('Interpolating saturation coefficient to y positions of max absorption')
+
+        from scipy.optimize import minimize
+        print('  Fitting curve to find max absorption positions...')
+        res = minimize(neg_sum_absorbed_fraction, [2.37e-5, -0.01728, 38.8663])
+        a, m, c = res.x
+        y0 = a * x**2 + m*x + c
+        plt.imshow(sum_A)
+        plt.plot(x, y0, 'r-', linewidth=0.5)
+        plt.savefig('max_absorption_pos.png', dpi=300)
+        plt.clf()
+
+        # Interpolate the saturation coefficient at these points for each
+        # realisation:
+
+        R0 = np.zeros((n_realisations, R.shape[2]))
+        for i in tqdm(range(n_realisations), desc='  interpolating saturation_coefficient'):
+            for x_index in x:
+                interpolator = interp1d(y, R[i, :, x_index])
+                R_interp = interpolator(y0[x_index])
+                R0[i, x_index] = R_interp
+
+        h5_save(processed_data, 'max_absorption_saturation_coefficient', R0)
+
+def compute_1D_OD():
+    """Compute the 1D OD of each realisation as:
+        OD = - alpha * log(1 - A_tot) + R0 * A_tot
+    
+    where A_tot is the column-summed, reconstructed absorbed fraction at each
+    x position and R0 is the saturation coefficient interpolated to the y
+    position of maximum absorption (which is where the atoms are assumed to be
+    located."""
+    with h5py.File(processed_data_h5) as processed_data:
+        R0 = processed_data['max_absorption_saturation_coefficient']
+        A_tot = processed_data['reconstructed_total_absorbed_fraction']
+
+        print('computing 1D ODs')
+
+        outdir_OD = 'OD_1D'
+        if not os.path.exists(outdir_OD):
+            os.mkdir(outdir_OD)
+
+        OD_1D = np.zeros((n_realisations, image_shape[1]))
+        density_1D = np.zeros((n_realisations, image_shape[1]))
+        for i in tqdm(range(n_realisations), desc='  computing OD'):
+            OD = -alpha * np.log(1 - A_tot[i]) + R0[i] * A_tot[i]
+            density = OD / sigma_0 * dy
+            OD_1D[i, :] = OD
+            density_1D[i, :] = density
+
+            plt.plot(OD, label='1D OD')
+            plt.plot(density/1e6, label='density (per um)')
+            plt.ylabel('1D OD and density')
+            plt.xlabel('x pixel')
+            plt.grid(True)
+            plt.axis([0, 648, -0.5, 16])
+            plt.legend()
+            plt.savefig(os.path.join(outdir_OD, f'{i:02d}.png'))
+            plt.clf()
+
+        h5_save(processed_data, 'OD_1D', OD_1D)
+        h5_save(processed_data, 'density_1D', density_1D)
+
+
+def compute_linear_density():
+    """From the y-integrated absorbed fractions, invert the diffusion model to
+    find the linear denisty at each x position"""
+
+    from scipy.optimize import fsolve
+    
+    def column_density_from_absorbed_fraction(A, R):
+        """Compute the column density n given an absorbed fraction A and
+        saturation coefficient R"""
+        OD = -alpha * np.log(1-A) + R*A
+        return OD/sigma_0
+
+    def absorbed_fraction_from_column_density(n, R):
+        """Inverse of above. Compute the absorbed fraction A given a column
+        density n and saturation coefficient R"""
+        # Initial guess based on quadratic approximation:
+        a = alpha / 2
+        b = alpha + R
+        c = - sigma_0 * n
+        guess = (-b + np.sqrt(b**2 - 4 * a * c)) / (2 * a)
+        guess = np.clip(guess, 0, 0.99)
+        return fsolve(lambda A: column_density(A, R) - n, guess)
+
+    def A_meas_from_linear_density(n_1d):
+        """Model for the integrated absorbed fraction given a particular
+        linear density n_1d"""
+        # invert inst absorbed_fraction at timepoints
+        # integrate them
+        pass
+
+    import IPython
+    IPython.embed()
+
+
+if __name__ == '__main__':
+    # save_pca_images()
+    # compute_mean_raw_images()
+    # compute_dark_systematic_offset()
+    # reconstruct_probe_frames()
+    # plot_reconstructed_probe_frames()
+    # reconstruct_dark_frames()
+    # plot_reconstructed_dark_frames()
+    # compute_OD_and_absorption_and_saturation_fractions()
+    # plot_OD_and_absorption_and_saturation_fractions()
+    # compute_averages()
+    # reconstruct_absorbed_fractions()
+    # compute_max_absorption_saturation_coefficient()
+    compute_linear_density()
+    # Make OD uncertainty maps

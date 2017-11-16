@@ -1,0 +1,43 @@
+\documentclass{report}
+\usepackage{amsmath}
+\begin{document}
+The instantaneous absorbed fraction $A(x, y, t)$ for a given column density $n(x, y, t)$ can be found by solving:
+\begin{align}\label{eq:A_inst}
+\sigma_0 n(x, y, t) = -\alpha^\star\log(1 - A(x,y,t)) + \frac{I}{I_{\rm sat}}A(x,y,t).
+\end{align}
+This will serve as our expression for $A(x, y, t)$ and will need to be solved numerically.
+The integrated absorbed fraction after a time $\tau$ is just the average of this:
+\begin{align}
+A_{\rm av}(x, y) = \frac1\tau\int_0^\tau A(x, y, t)\,{\rm d}t.
+\end{align}
+But because of diffraction we don't have access to this quantity, only its integral along the $y$ direction:
+\begin{align}
+A_{\rm meas}(x) &= \int A_{\rm av}(x, y)dy\\
+\Rightarrow A_{\rm meas}(x) & = \frac1\tau\int{\rm d}y\int_0^\tau A(x, y, t)\,{\rm d}t.\label{eq:A_meas}
+\end{align}
+Given a model for $n(x, y, t)$ with a single parameter for each $x$ position and a measurement $A_{\rm meas}(x)$ for each $x$ position, we can invert (\ref{eq:A_meas}) and (\ref{eq:A_inst}) to find the parameter at each $x$ position.
+
+The model for $n(x, y, t)$ is that it's a Gaussian with a time-dependent width in the $y$ direction, parametrised by its linear density $n_{\textsc{1d}}(x)$ at each $x$ position:
+\begin{equation}
+n(x, y, t) = \frac{n_{\textsc{1d}}(x)}{\sqrt{2\pi \sigma^2_y(t)}}\exp\left[-\frac{y^2}{2\sigma^2_y(t)}\right]
+\end{equation}
+Where $\sigma^2_y(t)$ is the mean squared $y$ position of the scatterers, which, assuming pure momentum diffusion starting from a size $\sqrt{\sigma_0/\pi}$ equal to the radius of a circle with area equal to the scattering cross section $\sigma_0 = 3\lambda^2 / {2\pi}$ is:
+\begin{align}
+\sigma^2_y(t) = \frac13\sigma^2_{v_y}(t)\, t^2 + \frac{\sigma_0}{\pi}.
+\end{align}
+The mean squared $y$ velocity $\sigma^2_{v_y}(t)$ is given by the scattering rate $R_{\rm scat}$and recoil velocity $v_{\rm rec}$:
+\begin{align}
+\sigma^2_{v_y}(t) = \frac13 (2\pi)^{-1}R_{\rm scat} v^2_{\rm rec} t
+\end{align}
+which is assuming isotropic scattering such that the per scattering event expected squared change in $y$ velocity is $v^2_{\rm rec}/3$.
+
+The scattering rate, assuming resonance (ignoring Doppler shifting out of resonance) is:
+\begin{align}
+R_{\rm scat} = \frac\Gamma2 \frac{I/I_{\rm sat}}{1 + I/I_{\rm sat}}
+\end{align}
+
+Putting it all together for the mean squared $y$ position:
+\begin{align}
+\sigma^2_y(t) = \frac{\sigma_0}{\pi} + \frac1{18\pi} R_{\rm scat} v^2_{\rm rec} t^3
+\end{align}
+\end{document}
