@@ -5,6 +5,8 @@ import h5py
 from tqdm import tqdm
 from image_reconstruction.cpu_reconstructor import CPUReconstructor
 
+pi = np.pi
+
 raw_data_h5 = 'raw_data.h5'
 processed_data_h5 = 'processed_data.h5'
 
@@ -25,14 +27,20 @@ ROI_y_stop = 255
 ROI_mask = np.ones(image_shape)
 ROI_mask[ROI_y_start:ROI_y_stop, ROI_x_start:ROI_x_stop] = 0
 
-# Parameters for computing optical densities:
+# Parameters for computing optical densities etc:
 Isat, alpha = 127.0, 0.92
 magnification =  6.66
 pixel_size = 5.6e-6
-dy = pixel_size / magnification
-lambda_Rb = 780.24e-9
-sigma_0 = 3*lambda_Rb**2 / (2 * np.pi)
+dy_pixel = pixel_size / magnification
+tau = 20e-6 # imaging pulse duration
 
+# Physical constants
+hbar = 1.054571628e-34
+lambda_Rb = 780.241209686e-9
+gamma_D2 = 1/26.2348e-9
+m_Rb = 1.443160648e-25
+sigma_0 = 3*lambda_Rb**2 / (2*pi)
+v_recoil = 2*pi*hbar/(m_Rb * lambda_Rb)
 
 def gaussian_blur(image, px):
     """gaussian blur an image by given number of pixels"""
@@ -408,12 +416,12 @@ def plot_reconstructed_dark_frames():
 
 def compute_OD_and_absorption_and_saturation_fractions():
     """Compute the OD corresponding to each image, as well as the absorbed
-    fraction and saturation coefficient. Note that due to imaging aberrations
+    fraction and saturation parameter. Note that due to imaging aberrations
     the OD is not particularly physically meaningful, but we compute it
     anyway, partly so we can compare with the more physically meaningful
     results after other processing."""
 
-    print("Computing naive OD, absorbed fraction and saturation coefficient")
+    print("Computing naive OD, absorbed fraction and saturation parameter")
 
     with h5py.File(raw_data_h5, 'r') as raw_data:
         with h5py.File(processed_data_h5) as processed_data:
@@ -469,16 +477,16 @@ def compute_averages():
     point in the parameter space. Average is computed as:
         -alpha * log (1 - <A>) + <R> * <A>
     where <A> is the mean of the absorbed fractions and <R> is the mean of
-    the saturation coefficient. The mean of the absorbed fractions is taken
+    the saturation parameter. The mean of the absorbed fractions is taken
     before the log to avoid biasing the result toward higher ODs, since the
     log of a Gaussian random variable has asymmetric uncertainties and cannot
     be simply averaged together to obtain an unbiased estimate of the most
     likely value.
 
     Also and more importantly, compute the mean absorbed fraction for each
-    realisation and mean saturation coefficient"""
+    realisation and mean saturation parameter"""
 
-    print("Computing average OD, absorbed_fraction and saturation coefficient for each final_dipole")
+    print("Computing average OD, absorbed_fraction and saturation parameter for each final_dipole")
 
     outdir_OD = 'average_naive_OD'
     if not os.path.exists(outdir_OD):
@@ -638,7 +646,7 @@ def reconstruct_absorbed_fractions():
 def compute_max_absorption_saturation_coefficient():
     """determine where the y position of maximum absorption of the
     reconstructed absorbed_fractions is at each x position, and interpolate
-    the mean saturation coefficient to that point. This is done by simply
+    the mean saturation parameter to that point. This is done by simply
     finding the quadratic curve that maximises the sum of all (interpolated)
     absorbed fractions it passes through at each pixel adn each
     realisation."""
@@ -646,7 +654,7 @@ def compute_max_absorption_saturation_coefficient():
         A = processed_data['reconstructed_average_absorbed_fraction_ROI'][:]
         x = np.indices((A.shape[2],))[0]
         y = np.indices((A.shape[1],))[0]
-        R = processed_data['average_saturation_coefficient'][:, ROI_y_start:ROI_y_stop, ROI_x_start:ROI_x_stop]
+        S = processed_data['average_saturation_coefficient'][:, ROI_y_start:ROI_y_stop, ROI_x_start:ROI_x_stop]
 
         from scipy.interpolate import interp1d
         
@@ -666,7 +674,7 @@ def compute_max_absorption_saturation_coefficient():
                 total += sum_A_interp
             return -total
 
-        print('Interpolating saturation coefficient to y positions of max absorption')
+        print('Interpolating saturation parameter to y positions of max absorption')
 
         from scipy.optimize import minimize
         print('  Fitting curve to find max absorption positions...')
@@ -678,28 +686,28 @@ def compute_max_absorption_saturation_coefficient():
         plt.savefig('max_absorption_pos.png', dpi=300)
         plt.clf()
 
-        # Interpolate the saturation coefficient at these points for each
+        # Interpolate the saturation parameter at these points for each
         # realisation:
 
-        R0 = np.zeros((n_realisations, R.shape[2]))
+        S0 = np.zeros((n_realisations, S.shape[2]))
         for i in tqdm(range(n_realisations), desc='  interpolating saturation_coefficient'):
             for x_index in x:
-                interpolator = interp1d(y, R[i, :, x_index])
-                R_interp = interpolator(y0[x_index])
-                R0[i, x_index] = R_interp
+                interpolator = interp1d(y, S[i, :, x_index])
+                S_interp = interpolator(y0[x_index])
+                S0[i, x_index] = S_interp
 
-        h5_save(processed_data, 'max_absorption_saturation_coefficient', R0)
+        h5_save(processed_data, 'max_absorption_saturation_coefficient', S0)
 
 def compute_1D_OD():
     """Compute the 1D OD of each realisation as:
         OD = - alpha * log(1 - A_tot) + R0 * A_tot
     
     where A_tot is the column-summed, reconstructed absorbed fraction at each
-    x position and R0 is the saturation coefficient interpolated to the y
+    x position and R0 is the saturation parameter interpolated to the y
     position of maximum absorption (which is where the atoms are assumed to be
     located."""
     with h5py.File(processed_data_h5) as processed_data:
-        R0 = processed_data['max_absorption_saturation_coefficient']
+        S0 = processed_data['max_absorption_saturation_coefficient']
         A_tot = processed_data['reconstructed_total_absorbed_fraction']
 
         print('computing 1D ODs')
@@ -711,8 +719,8 @@ def compute_1D_OD():
         OD_1D = np.zeros((n_realisations, image_shape[1]))
         density_1D = np.zeros((n_realisations, image_shape[1]))
         for i in tqdm(range(n_realisations), desc='  computing OD'):
-            OD = -alpha * np.log(1 - A_tot[i]) + R0[i] * A_tot[i]
-            density = OD / sigma_0 * dy
+            OD = -alpha * np.log(1 - A_tot[i]) + S0[i] * A_tot[i]
+            density = OD / sigma_0 * dy_pixel
             OD_1D[i, :] = OD
             density_1D[i, :] = density
 
@@ -736,30 +744,46 @@ def compute_linear_density():
 
     from scipy.optimize import fsolve
     
-    def column_density_from_absorbed_fraction(A, R):
+    def column_density_from_absorbed_fraction(A, S):
         """Compute the column density n given an absorbed fraction A and
-        saturation coefficient R"""
-        OD = -alpha * np.log(1-A) + R*A
+        saturation parameter S"""
+        OD = -alpha * np.log(1-A) + S*A
         return OD/sigma_0
 
-    def absorbed_fraction_from_column_density(n, R):
+    def absorbed_fraction_from_column_density(n, S):
         """Inverse of above. Compute the absorbed fraction A given a column
-        density n and saturation coefficient R"""
+        density n and saturation parameter S"""
         # Initial guess based on quadratic approximation:
         a = alpha / 2
-        b = alpha + R
+        b = alpha + S
         c = - sigma_0 * n
         guess = (-b + np.sqrt(b**2 - 4 * a * c)) / (2 * a)
         guess = np.clip(guess, 0, 0.99)
-        return fsolve(lambda A: column_density(A, R) - n, guess)
+        return fsolve(lambda A: column_density(A, S) - n, guess)
 
-    def A_meas_from_linear_density(n_1d):
+    def column_density_model(y, t, n_1D, S):
+        """Return the column density as a function of y at time t given the
+        linear density n_1D and our diffusion model with scattering rate for
+        saturation parameter S."""
+        R_scat = gamma_D2 / 2 * S / (1 + S)
+        sigma2_y = sigma_0 / pi + 1 / (18 * pi) * R_scat * v_recoil**2 * t**3
+        return n_1d / np.sqrt(2*pi*sigma2_y) * np.exp(-y**2 / (2*sigma2_y))
+
+    def A_meas_from_linear_density(n_1d, S):
         """Model for the integrated absorbed fraction given a particular
         linear density n_1d"""
-        # invert inst absorbed_fraction at timepoints
-        # integrate them
+        # make t, y grid
+        # compute column density at t, y grid
+        # solve for absorbed_fraction given column density at t, y grid
+        # integrate over t and y
+        # return
         pass
 
+    def linear_density_from_a_meas(A_meas, S):
+        """Inverse of above. Compute the linear density given a t and y
+        integrated absorbed fraction A_meas"""
+        pass
+        
     import IPython
     IPython.embed()
 
@@ -776,6 +800,6 @@ if __name__ == '__main__':
     # plot_OD_and_absorption_and_saturation_fractions()
     # compute_averages()
     # reconstruct_absorbed_fractions()
-    # compute_max_absorption_saturation_coefficient()
+    # compute_max_absorption_saturation_parameter()
     compute_linear_density()
     # Make OD uncertainty maps
