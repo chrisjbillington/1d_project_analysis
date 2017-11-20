@@ -742,7 +742,7 @@ def compute_linear_density():
     """From the y-integrated absorbed fractions, invert the diffusion model to
     find the linear denisty at each x position"""
 
-    from scipy.optimize import fsolve
+    from scipy.optimize import fsolve, brentq
     
     def column_density_from_absorbed_fraction(A, S):
         """Compute the column density n given an absorbed fraction A and
@@ -753,39 +753,81 @@ def compute_linear_density():
     def absorbed_fraction_from_column_density(n, S):
         """Inverse of above. Compute the absorbed fraction A given a column
         density n and saturation parameter S"""
-        # Initial guess based on quadratic approximation:
-        a = alpha / 2
-        b = alpha + S
-        c = - sigma_0 * n
-        guess = (-b + np.sqrt(b**2 - 4 * a * c)) / (2 * a)
-        guess = np.clip(guess, 0, 0.99)
-        return fsolve(lambda A: column_density(A, S) - n, guess)
+        result = brentq(lambda A: column_density_from_absorbed_fraction(A, S) - n, 0, 1 - 1e-15)
+        return result
 
-    def column_density_model(y, t, n_1D, S):
+    def sigma2_y_of_t(t, S):
+        """Return the modelled mean squared y position of the scattering
+        target assuming diffusion with scattering rate for the saturation
+        paramter S"""
+        R_scat = gamma_D2 / 2 * S / (1 + S)
+        return (sigma_y_min)**2 + 1 / (18 * pi) * R_scat * v_recoil**2 * t**3
+
+    def column_density_model(y, t, n_1d, S):
         """Return the column density as a function of y at time t given the
         linear density n_1D and our diffusion model with scattering rate for
         saturation parameter S."""
-        R_scat = gamma_D2 / 2 * S / (1 + S)
-        sigma2_y = sigma_0 / pi + 1 / (18 * pi) * R_scat * v_recoil**2 * t**3
+        sigma2_y = sigma2_y_of_t(t, S)
         return n_1d / np.sqrt(2*pi*sigma2_y) * np.exp(-y**2 / (2*sigma2_y))
+
+    def absorbed_fraction_from_linear_density(y, t, n_1d, S):
+        """Return the absorbed fraction at position y and time t for the given
+        linear density and saturation parameter"""
+        n = column_density_model(y, t, n_1d, S)
+        A = absorbed_fraction_from_column_density(n, S)
+        return A
 
     def A_meas_from_linear_density(n_1d, S):
         """Model for the integrated absorbed fraction given a particular
         linear density n_1d"""
-        # make t, y grid
-        # compute column density at t, y grid
-        # solve for absorbed_fraction given column density at t, y grid
-        # integrate over t and y
-        # return
-        pass
 
+        def integrand(y, t):
+            return absorbed_fraction_from_linear_density(y, t, n_1d, S)
+
+        from scipy.integrate import dblquad
+
+        # Double integral of A from t=0 to tau and y=0 to 5 standard deviations
+        # of the modelled Gaussian distribution:
+        result, err = dblquad(integrand,
+                              0, tau,
+                              lambda t: 0,
+                              lambda t: 5*np.sqrt(sigma2_y_of_t(t, S)))
+        # Divide by tau to get the time-averaged absorbed fraction and
+        # multiply by 2 to get the integral over all space instead of
+        # just y > 0:
+        A_meas = 2 / tau * result
+        return A_meas
+
+    @np.vectorize # Call elementwise on arrays
     def linear_density_from_a_meas(A_meas, S):
         """Inverse of above. Compute the linear density given a t and y
         integrated absorbed fraction A_meas"""
-        pass
-        
-    import IPython
-    IPython.embed()
+        guess = 5/1e-6 # 5 atoms per micron
+        return fsolve(lambda n_1d: A_meas_from_linear_density(n_1d, S) - A_meas, guess)
+    
+
+    sigma_y_min = np.sqrt(sigma_0 / pi)
+
+    n_1d = np.linspace(0, 20)/1e-6
+    A_tot = np.vectorize(A_meas_from_linear_density)(n_1d, 1.5)
+
+    plt.plot(A_tot/dy_pixel, n_1d*1e-6)
+    plt.axis([0, 1, 0, 20])
+
+    sigma_y_min = 300e-9
+
+    n_1d = np.linspace(0, 20)/1e-6
+    A_tot = np.vectorize(A_meas_from_linear_density)(n_1d, 1.5)
+
+    plt.plot(A_tot/dy_pixel, n_1d*1e-6)
+    plt.axis([0, 1, 0, 20])
+
+    plt.show()
+    import time
+    start_time = time.time()    
+    result = linear_density_from_a_meas(0.5*dy_pixel, 1.5)
+    print(result[0]/1e6, time.time() - start_time)
+
 
 
 if __name__ == '__main__':
