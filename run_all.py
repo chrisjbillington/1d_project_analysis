@@ -15,7 +15,8 @@ with h5py.File(raw_data_h5, 'r') as raw_data:
     n_shots = raw_data['atoms'].shape[0]
     image_shape = raw_data['atoms'].shape[1:]
     # The number of values of the final_dipole variable:
-    n_realisations = len(set(raw_data['final_dipole']))
+    realisations = sorted(set(zip(raw_data['short_TOF'], raw_data['final_dipole'])))
+    n_realisations = len(realisations)
 
 # The ROI where the atoms are:
 ROI_x_start = 0
@@ -356,7 +357,7 @@ def reconstruct_dark_frames():
     frame is the mean dark frame, plus a multiple of the systematic dark
     offset with coefficient determined by the least squares reconstruction
     during the probe reconstruction step, plus a multiple of each of principal
-    components 4 and 5 of the probe frames (which we are taking to be readout
+    components 5 and 6 of the probe frames (which we are taking to be readout
     noise since they appear identically in the principal components of the
     dark frames), with coefficients determined by the projection of the atoms
     frame onto those principal components in the unmasked region"""
@@ -380,7 +381,7 @@ def reconstruct_dark_frames():
 
             # The principal components we wish to count as dark:
             mean_image, principal_components, evals = reconstructor.pca_images()
-            pc4, pc5 = principal_components[4], principal_components[5]
+            pc5, pc6 = principal_components[5], principal_components[6]
             del principal_components
 
             reconstructed_dark_frames = np.zeros(raw_atoms_images.shape)
@@ -391,7 +392,7 @@ def reconstruct_dark_frames():
                                                                 return_coeffs=True)
                 dark_systematic_offset_coeff = dark_systematic_offset_coeffs[i]
                 offset = dark_systematic_offset_coeff * dark_systematic_offset
-                reconstructed_dark = mean_raw_dark + offset + coeffs[4] * pc4 + coeffs[5] * pc5
+                reconstructed_dark = mean_raw_dark + offset + coeffs[5] * pc5 + coeffs[6] * pc6
 
                 reconstructed_dark_frames[i] = reconstructed_dark
 
@@ -486,7 +487,7 @@ def compute_averages():
     Also and more importantly, compute the mean absorbed fraction for each
     realisation and mean saturation parameter"""
 
-    print("Computing average OD, absorbed_fraction and saturation parameter for each final_dipole")
+    print("Computing average OD, absorbed_fraction and saturation parameter for each final_dipole/short_TOF pair")
 
     outdir_OD = 'average_naive_OD'
     if not os.path.exists(outdir_OD):
@@ -499,21 +500,22 @@ def compute_averages():
         os.mkdir(outdir_saturation_coefficient)
 
     with h5py.File(raw_data_h5, 'r') as raw_data:
-        dipoles = raw_data['final_dipole'][:]
+        final_dipole = raw_data['final_dipole'][:]
+        short_TOF = raw_data['short_TOF'][:]
 
     with h5py.File(processed_data_h5) as processed_data:
         absorbed_fraction = processed_data['absorbed_fraction']
         saturation_coefficient = processed_data['saturation_coefficient']
 
-        average_OD = np.zeros((len(set(dipoles)), *image_shape))
+        average_OD = np.zeros((n_realisations, *image_shape))
         average_absorbed_fraction = np.zeros(average_OD.shape)
         average_saturation_coefficient = np.zeros(average_OD.shape)
 
-        sorted_dipoles = sorted(set(dipoles))
-        for i, dipole_val in tqdm(enumerate(sorted_dipoles), total=len(set(dipoles)), desc='  Saving images'):
+        for i, (tof_val, dipole_val) in tqdm(enumerate(realisations), total=n_realisations, desc='  Saving images'):
+            matching_shots = (final_dipole == dipole_val) & (short_TOF == tof_val)
 
-            mean_absorbed_fraction = absorbed_fraction[dipoles == dipole_val, :, :].mean(axis=0)
-            mean_saturation_coefficient = saturation_coefficient[dipoles == dipole_val, :, :].mean(axis=0)
+            mean_absorbed_fraction = absorbed_fraction[matching_shots, :, :].mean(axis=0)
+            mean_saturation_coefficient = saturation_coefficient[matching_shots, :, :].mean(axis=0)
             average_OD_i = -alpha * np.log(1 - mean_absorbed_fraction) + mean_saturation_coefficient * mean_absorbed_fraction
 
             average_OD[i] = average_OD_i
@@ -527,8 +529,8 @@ def compute_averages():
         h5_save(processed_data, 'average_OD', average_OD)
         h5_save(processed_data, 'average_absorbed_fraction', average_absorbed_fraction)
         h5_save(processed_data, 'average_saturation_coefficient', average_saturation_coefficient)
-        h5_save(processed_data, 'sorted_final_dipoles', np.array(sorted_dipoles))
-    
+        h5_save(processed_data, 'realisation_final_dipole', np.array(realisations)[:, 1])
+        h5_save(processed_data, 'realisation_short_TOF', np.array(realisations)[:, 0])
     
 
 def reconstruct_absorbed_fractions():
@@ -843,5 +845,5 @@ if __name__ == '__main__':
     # compute_averages()
     # reconstruct_absorbed_fractions()
     # compute_max_absorption_saturation_parameter()
-    compute_linear_density()
+    # compute_linear_density()
     # Make OD uncertainty maps
