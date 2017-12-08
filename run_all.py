@@ -115,9 +115,12 @@ def save_pca_images():
 
     # Do this for each set of raw images:
     with h5py.File(raw_data_h5, 'r') as raw_data:
+        # These are very RAM consuming and for some reason memory is not freed
+        # after each one. You might need to run them one at a time in order to
+        # not run out of memory:
         _save_pca_images(raw_data['probe'], 'probe')
         _save_pca_images(raw_data['dark'], 'dark')
-        _save_pca_images(raw_data['dark'], 'atoms', ROI_mask)
+        _save_pca_images(raw_data['atoms'], 'atoms', ROI_mask)
 
 
 def compute_mean_raw_images():
