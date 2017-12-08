@@ -18,6 +18,9 @@ with h5py.File(raw_data_h5, 'r') as raw_data:
     realisations = sorted(set(zip(raw_data['short_TOF'], raw_data['final_dipole'])))
     n_realisations = len(realisations)
 
+# How many principal components we use in the slice-by-slice reconstructions:
+n_principal_components = 4
+
 # The ROI where the atoms are:
 ROI_x_start = 0
 ROI_x_stop = image_shape[1]
@@ -418,7 +421,7 @@ def plot_reconstructed_dark_frames():
             plt.imsave(os.path.join(outdir, f'{i:04d}.png'), frame)
 
 
-def compute_OD_and_absorption_and_saturation_fractions():
+def compute_OD_and_absorption_and_saturation_parameter():
     """Compute the OD corresponding to each image, as well as the absorbed
     fraction and saturation parameter. Note that due to imaging aberrations
     the OD is not particularly physically meaningful, but we compute it
@@ -435,25 +438,25 @@ def compute_OD_and_absorption_and_saturation_fractions():
 
             OD = np.zeros(raw_atoms_frames.shape)
             absorbed_fraction = np.zeros(raw_atoms_frames.shape)
-            saturation_coefficient = np.zeros(raw_atoms_frames.shape)
+            saturation_parameter = np.zeros(raw_atoms_frames.shape)
 
             zipvars = zip(raw_atoms_frames, reconstructed_probe_frames, reconstructed_dark_frames)
             for i, (atoms, probe, dark) in tqdm(enumerate(zipvars), total=n_shots):
                 absorbed_fraction_i = 1 - (atoms - dark)/(probe - dark)
-                saturation_coefficient_i = (probe - dark) / Isat
+                saturation_parameter_i = (probe - dark) / Isat
 
-                OD[i] = -alpha * np.log(1 - absorbed_fraction_i) + saturation_coefficient_i * absorbed_fraction_i
+                OD[i] = -alpha * np.log(1 - absorbed_fraction_i) + saturation_parameter_i * absorbed_fraction_i
                 absorbed_fraction[i] =  absorbed_fraction_i
-                saturation_coefficient[i] = saturation_coefficient_i
+                saturation_parameter[i] = saturation_parameter_i
 
-            h5_save(processed_data, 'OD', OD)
+            h5_save(processed_data, 'naive_OD', OD)
             h5_save(processed_data, 'absorbed_fraction', absorbed_fraction)
-            h5_save(processed_data, 'saturation_coefficient', saturation_coefficient)
+            h5_save(processed_data, 'saturation_parameter', saturation_parameter)
 
 
-def plot_OD_and_absorption_and_saturation_fractions():
-    """Save to disk images of the OD"""
-    print("Saving naive OD images, and abosrption and saturation images")
+def plot_OD_and_absorption_and_saturation_parameter():
+    """Save to disk images of the OD and saturation parameter"""
+    print("Saving naive OD images, and absorption and saturation images")
 
     outdir_OD = 'naive_OD'
     if not os.path.exists(outdir_OD):
@@ -461,26 +464,26 @@ def plot_OD_and_absorption_and_saturation_fractions():
     outdir_absorbed_fraction = 'absorbed_fraction'
     if not os.path.exists(outdir_absorbed_fraction):
         os.mkdir(outdir_absorbed_fraction)
-    outdir_saturation_coefficient = 'saturation_coefficient'
-    if not os.path.exists(outdir_saturation_coefficient):
-        os.mkdir(outdir_saturation_coefficient)
+    outdir_saturation_parameter = 'saturation_parameter'
+    if not os.path.exists(outdir_saturation_parameter):
+        os.mkdir(outdir_saturation_parameter)
 
     with h5py.File(processed_data_h5) as processed_data:
-        OD = processed_data['OD']
+        OD = processed_data['naive_OD']
         absorbed_fraction = processed_data['absorbed_fraction']
-        saturation_coefficient = processed_data['saturation_coefficient']
+        saturation_parameter = processed_data['saturation_parameter']
         for i in tqdm(range(len(OD)),  desc='  Saving images'):
             plt.imsave(os.path.join(outdir_OD, f'{i:04d}.png'), OD[i], vmin=-1, vmax=1, cmap='seismic')
             plt.imsave(os.path.join(outdir_absorbed_fraction, f'{i:04d}.png'), absorbed_fraction[i], vmin=-1, vmax=1, cmap='seismic')
-            plt.imsave(os.path.join(outdir_saturation_coefficient, f'{i:04d}.png'), saturation_coefficient[i], vmin=-1, vmax=1, cmap='seismic')
+            plt.imsave(os.path.join(outdir_saturation_parameter, f'{i:04d}.png'), saturation_parameter[i], vmin=-1, vmax=1, cmap='seismic')
 
 
 def compute_averages():
     """Average the (naive) ODs of each set of shots that are from the same
     point in parameter space (realisation) to produce a mean OD image for each
     point in the parameter space. Average is computed as:
-        -alpha * log (1 - <A>) + <R> * <A>
-    where <A> is the mean of the absorbed fractions and <R> is the mean of
+        -alpha * log (1 - <A>) + <S> * <A>
+    where <A> is the mean of the absorbed fractions and <S> is the mean of
     the saturation parameter. The mean of the absorbed fractions is taken
     before the log to avoid biasing the result toward higher ODs, since the
     log of a Gaussian random variable has asymmetric uncertainties and cannot
@@ -529,14 +532,14 @@ def compute_averages():
             plt.imsave(os.path.join(outdir_absorbed_fraction, f'{i:02d}.png'), mean_absorbed_fraction, vmin=-1, vmax=1, cmap='seismic')
             plt.imsave(os.path.join(outdir_saturation_parameter, f'{i:02d}.png'), mean_saturation_parameter, vmin=-1, vmax=1, cmap='seismic')
 
-        h5_save(processed_data, 'average_OD', average_OD)
+        h5_save(processed_data, 'naive_average_OD', average_OD)
         h5_save(processed_data, 'average_absorbed_fraction', average_absorbed_fraction)
         h5_save(processed_data, 'average_saturation_parameter', average_saturation_parameter)
         h5_save(processed_data, 'realisation_final_dipole', np.array(realisations)[:, 1])
         h5_save(processed_data, 'realisation_short_TOF', np.array(realisations)[:, 0])
     
 
-def reconstruct_absorbed_fractions():
+def reconstruct_absorbed_fraction():
     """Do dimensionality reduction on each vertical slice of the average
     absorbed fractions in the ROI using a principal component basis based on
     that slice and four surrounding slices in all averages ODs. The aim of
@@ -653,7 +656,7 @@ def compute_max_absorption_saturation_parameter():
     reconstructed absorbed_fractions is at each x position, and interpolate
     the mean saturation parameter to that point. This is done by simply
     finding the quadratic curve that maximises the sum of all (interpolated)
-    absorbed fractions it passes through at each pixel adn each
+    absorbed fractions it passes through at each pixel and each
     realisation."""
     with h5py.File(processed_data_h5) as processed_data:
         A = processed_data['reconstructed_average_absorbed_fraction_ROI'][:]
@@ -695,7 +698,7 @@ def compute_max_absorption_saturation_parameter():
         # realisation:
 
         S0 = np.zeros((n_realisations, S.shape[2]))
-        for i in tqdm(range(n_realisations), desc='  interpolating saturation_parameter'):
+        for i in tqdm(range(n_realisations), desc='  interpolating saturation parameter'):
             for x_index in x:
                 interpolator = interp1d(y, S[i, :, x_index])
                 S_interp = interpolator(y0[x_index])
@@ -704,38 +707,44 @@ def compute_max_absorption_saturation_parameter():
         h5_save(processed_data, 'max_absorption_saturation_parameter', S0)
 
 
-def compute_naive_reconstructed_average_OD_and_linear_density():
-    """Compute the naive OD of each realisation as:
-        OD = - alpha * log(1 - A) + S0 * A
-    
-    where A is the averaged, reconstructed absorbed fraction at each x
-    position and S0 is the average saturation parameter interpolated to the y position
-    of maximum absorption (which is where the atoms are assumed to be
-    located). Compute the linear density corresponding to this as well."""
+def compute_reconstructed_naive_average_OD():
+    """based on the reconstructed absorbed fractions and saturation parameter,
+    compute naive OD of each realisation using -alpha * log (1 - A) + S0 * A where
+    A is the reconstructed average absorbed fraction and S is the saturation
+    parameter at the max absorption y position"""
 
+    outdir = 'reconstructed_naive_average_OD'
+    if not os.path.exists(outdir):
+        os.mkdir(outdir)
+ 
     with h5py.File(processed_data_h5) as processed_data:
         S0 = processed_data['max_absorption_saturation_parameter']
         A = processed_data['reconstructed_average_absorbed_fraction_ROI']
+        reconstructed_naive_average_OD = np.zeros(A.shape)
+        for i in tqdm(range(n_realisations), desc='  computing naive recon. OD'):
+            A_i = A[i]
+            S0_i = S0[i]
+            OD_i = -alpha * np.log(1 - A_i) + S0_i * A_i 
+            reconstructed_naive_average_OD[i] = OD_i
+            plt.imsave(os.path.join(outdir, f'{i:04d}.png'), OD_i, vmin=-0.5, vmax=0.5, cmap='seismic')
+        h5_save(processed_data, 'reconstructed_naive_average_OD', reconstructed_naive_average_OD)
 
-        print('computing naive reconstructed ODs and linear desnities')
 
-        outdir_OD = 'naive_reconstructed_average_OD'
-        if not os.path.exists(outdir_OD):
-            os.mkdir(outdir_OD)
+def compute_naive_linear_density():
+    """Compute the naive linear density as the y integral of the naive ODs."""
+    with h5py.File(processed_data_h5) as processed_data:
+        reconstructed_naive_average_OD = processed_data['reconstructed_naive_average_OD']
+
+        print('computing naive linear density')
 
         outdir_linear_density = 'naive_reconstructed_average_linear_density'
         if not os.path.exists(outdir_linear_density):
             os.mkdir(outdir_linear_density)
 
-        OD = np.zeros(A.shape)
-        linear_density = np.zeros((n_realisations, image_shape[1]))
-        for i in tqdm(range(n_realisations)):
-            OD_i = -alpha * np.log(1 - A[i]) + S0[i] * A[i]
-            linear_density_i= (OD_i / sigma_0).sum(axis=0) * dy_pixel
-            OD[i, :, :] = OD_i
-            linear_density[i, :] = linear_density_i
-
-            plt.imsave(os.path.join(outdir_OD, f'{i:04d}.png'), OD_i, vmin=-0.5, vmax=0.5, cmap='seismic')
+        naive_linear_density = np.zeros((n_realisations, image_shape[1]))
+        for i in tqdm(range(n_realisations), desc='  computing naive lin. dens.'):
+            linear_density_i = reconstructed_naive_average_OD[i].sum(0) * dy_pixel / sigma_0 
+            naive_linear_density[i, :] = linear_density_i
 
             plt.plot(linear_density_i/1e6)
             plt.ylabel('linear density (per um)')
@@ -745,13 +754,12 @@ def compute_naive_reconstructed_average_OD_and_linear_density():
             plt.savefig(os.path.join(outdir_linear_density, f'{i:02d}.png'))
             plt.clf()
 
-        h5_save(processed_data, 'naive_reconstructed_average_linear_density', linear_density)
-        h5_save(processed_data, 'naive_reconstructed_average_OD', OD)
+        h5_save(processed_data, 'naive_linear_density', naive_linear_density)
 
 
 def compute_linear_density():
     """From the y-integrated absorbed fractions, invert the diffusion model to
-    find the linear denisty at each x position"""
+    find the linear density at each x position"""
 
     from scipy.optimize import fsolve, brentq
     
@@ -760,13 +768,19 @@ def compute_linear_density():
     def column_density_from_absorbed_fraction(A, S):
         """Compute the column density n given an absorbed fraction A and
         saturation parameter S"""
+        print(f'      trying absorbed fraction {A}')
         OD = -alpha * np.log(1-A) + S*A
         return OD/sigma_0
 
     def absorbed_fraction_from_column_density(n, S):
         """Inverse of above. Compute the absorbed fraction A given a column
         density n and saturation parameter S"""
-        result = brentq(lambda A: column_density_from_absorbed_fraction(A, S) - n, 0, 1 - 1e-15)
+        try:
+            result = brentq(lambda A: column_density_from_absorbed_fraction(A, S) - n, -.5 , 1 - 1e-15)
+        except Exception as e:
+            print(e)
+            import IPython
+            IPython.embed()
         return result
 
     def sigma2_y_of_t(t, S):
@@ -787,6 +801,7 @@ def compute_linear_density():
         """Return the absorbed fraction at position y and time t for the given
         linear density and saturation parameter"""
         n = column_density_model(y, t, n_1d, S)
+        print(f'    integrating: y={y}, t={t}, n={n}, S={S}')
         A = absorbed_fraction_from_column_density(n, S)
         return A
 
@@ -794,6 +809,7 @@ def compute_linear_density():
         """Model for the integrated absorbed fraction given a particular
         linear density n_1d"""
 
+        print(f'  trying linear density {n_1d}')
         def integrand(y, t):
             return absorbed_fraction_from_linear_density(y, t, n_1d, S)
 
@@ -816,29 +832,38 @@ def compute_linear_density():
         """Inverse of above. Compute the linear density given a t and y
         integrated absorbed fraction A_meas"""
         guess = 5/1e-6 # 5 atoms per micron
+        # return brentq(lambda n_1d: A_meas_from_linear_density(n_1d, S) - A_meas, -15/1e-6, 15/1e-6)
         return fsolve(lambda n_1d: A_meas_from_linear_density(n_1d, S) - A_meas, guess)
     
+    print('inverting absorption model to obtain linear densities')
 
-    n_1d = np.linspace(0, 20)/1e-6
-    A_tot = np.vectorize(A_meas_from_linear_density)(n_1d, 1.5)
+    with h5py.File(processed_data_h5) as processed_data:
+        A_meas = processed_data['integrated_average_reconstructed_absorbed_fraction']
+        S0 = processed_data['max_absorption_saturation_parameter']
 
-    plt.plot(A_tot/dy_pixel, n_1d*1e-6)
-    plt.axis([0, 1, 0, 20])
-    plt.show()
+        linear_density = np.zeros(A_meas.shape)
+        for i in tqdm(range(n_realisations), desc='  computing linear density'):
+            for j in tqdm(range(A_meas.shape[1]), desc='    over pixels ...'):
+                print(f'a_meas is {A_meas[i, j]}, S0 is {S0[i, j]}')
+                linear_density[i, j] = linear_density_from_a_meas(A_meas[i, j], S0[i, j])
+
+        h5_save(processed_data, 'model_linear_density', model_linear_density)
+
 
 if __name__ == '__main__':
-    save_pca_images()
-    compute_mean_raw_images()
-    compute_dark_systematic_offset()
-    reconstruct_probe_frames()
-    plot_reconstructed_probe_frames()
-    reconstruct_dark_frames()
-    plot_reconstructed_dark_frames()
-    compute_OD_and_absorption_and_saturation_fractions()
-    plot_OD_and_absorption_and_saturation_fractions()
+    # save_pca_images()
+    # compute_mean_raw_images()
+    # compute_dark_systematic_offset()
+    # reconstruct_probe_frames()
+    # plot_reconstructed_probe_frames()
+    # reconstruct_dark_frames()
+    # plot_reconstructed_dark_frames()
+    compute_OD_and_absorption_and_saturation_parameter()
+    plot_OD_and_absorption_and_saturation_parameter()
     compute_averages()
-    reconstruct_absorbed_fractions()
+    reconstruct_absorbed_fraction()
     compute_max_absorption_saturation_parameter()
-    compute_naive_reconstructed_average_OD_and_linear_density()
-    # compute_linear_density()
+    compute_reconstructed_naive_average_OD()
+    compute_naive_linear_density()
+    # compute_model_linear_density()
     # Make OD uncertainty maps
