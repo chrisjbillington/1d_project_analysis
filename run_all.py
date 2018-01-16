@@ -689,7 +689,7 @@ def compute_max_absorption_saturation_parameter():
         res = minimize(neg_sum_absorbed_fraction, [2.37e-5, -0.01728, 38.8663])
         a, m, c = res.x
         y0 = a * x**2 + m*x + c
-        plt.imshow(mean_A, vmin=0, vmax=1)
+        plt.imshow(mean_A, vmin=0, vmax=0.1)
         plt.plot(x, y0, 'r-', linewidth=0.5)
         plt.savefig('max_absorption_pos.png', dpi=300)
         plt.clf()
@@ -858,12 +858,17 @@ if __name__ == '__main__':
     # plot_reconstructed_probe_frames()
     # reconstruct_dark_frames()
     # plot_reconstructed_dark_frames()
-    compute_OD_and_absorption_and_saturation_parameter()
-    plot_OD_and_absorption_and_saturation_parameter()
-    compute_averages()
-    reconstruct_absorbed_fraction()
-    compute_max_absorption_saturation_parameter()
-    compute_reconstructed_naive_average_OD()
-    compute_naive_linear_density()
+    # compute_OD_and_absorption_and_saturation_parameter()
+    # plot_OD_and_absorption_and_saturation_parameter()
+    # compute_averages()
+    # reconstruct_absorbed_fraction()
+    # compute_max_absorption_saturation_parameter()
+    # compute_reconstructed_naive_average_OD()
+    # compute_naive_linear_density()
+
+    # Everything above done. Below function implemented but not functioning
+    # due to numerical solving issues only:
     # compute_model_linear_density()
+
+    # Not yet done:
     # Make OD uncertainty maps
