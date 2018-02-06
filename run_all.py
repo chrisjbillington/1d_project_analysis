@@ -540,13 +540,13 @@ def compute_averages():
     
 
 def reconstruct_absorbed_fraction():
-    """Do dimensionality reduction on each vertical slice of the average
-    absorbed fractions in the ROI using a principal component basis based on
-    that slice and four surrounding slices in all averages ODs. The aim of
+    """Do dimensionality reduction on each vertical slice of the absorbed
+    fractions in the ROI using a principal component basis based on that slice
+    and four surrounding slices in all average absorbed fractions. The aim of
     this is to reduce the noise present in each slice so that we can sum over
-    more pixels vertically before noise dominates the result. Sum the result
-    over y pixels in the ROI to get the reconstructed_total_absorbed_fraction
-    for each realisation"""
+    more pixels vertically before noise dominates the result. Integrate the result
+    over y pixels in the ROI to get the y integrated absorbed fraction
+    for each realisation."""
 
     def get_reference_slices(slice_x_index):
 
@@ -603,7 +603,7 @@ def reconstruct_absorbed_fraction():
 
         # Reconstruct slice by slice:
         reconstructed_average_absorbed_fraction_ROI = np.zeros(average_absorbed_fraction_ROI.shape)
-        reconstructed_total_absorbed_fraction = np.zeros((n_realisations, average_absorbed_fraction_ROI.shape[2]))
+        integrated_reconstructed_average_absorbed_fraction = np.zeros((n_realisations, average_absorbed_fraction_ROI.shape[2]))
 
         for x_index in tqdm(range(average_absorbed_fraction_ROI.shape[2]), desc='  Reconstructing slices'):
             reference_slices = get_reference_slices(x_index)
@@ -618,16 +618,16 @@ def reconstruct_absorbed_fraction():
                 reconstructed_slice, rchi2 = reconstructor.reconstruct(target_slice,
                                                  n_principal_components=n_principal_components)
                 reconstructed_average_absorbed_fraction_ROI[i, :, x_index] = reconstructed_slice
-                reconstructed_total_absorbed_fraction[i, x_index] = reconstructed_slice.sum(axis=0)
+                integrated_reconstructed_average_absorbed_fraction[i, x_index] = reconstructed_slice.sum(axis=0) * dy_pixel
 
         h5_save(processed_data, 'reconstructed_average_absorbed_fraction_ROI', reconstructed_average_absorbed_fraction_ROI)
-        h5_save(processed_data, 'reconstructed_total_absorbed_fraction', reconstructed_total_absorbed_fraction)
+        h5_save(processed_data, 'integrated_reconstructed_average_absorbed_fraction', integrated_reconstructed_average_absorbed_fraction)
 
         # plot them:
         outdir_OD = 'reconstructed_average_absorbed_fraction'
         if not os.path.exists(outdir_OD):
             os.mkdir(outdir_OD)
-        outdir_colsums = 'reconstructed_absorbed_fraction_column_sums'
+        outdir_colsums = 'integrated_reconstructed_average_absorbed_fraction'
         if not os.path.exists(outdir_colsums):
             os.mkdir(outdir_colsums)
         for i in tqdm(range(n_realisations), desc='  Saving images'):
@@ -639,12 +639,12 @@ def reconstruct_absorbed_fraction():
             column_density_orig = image.sum(axis=0)
             plt.plot(column_density_orig, linewidth=1.0, label='original')
 
-            column_density_recon = reconstructed_total_absorbed_fraction[i]
+            column_density_recon = integrated_reconstructed_average_absorbed_fraction[i]
             plt.plot(column_density_recon, label=f'uPCA{n_principal_components}', linewidth=1.0)
 
             plt.axis([0, 648, -0.5, 3])
             plt.xlabel('x pixel')
-            plt.ylabel('y sum of absorbed fraction in ROI')
+            plt.ylabel('y integrated absorbed fraction in ROI')
             plt.grid(True)
             plt.legend()
             plt.savefig(os.path.join(outdir_colsums, f'{i:04d}.png'))
@@ -768,20 +768,14 @@ def compute_linear_density():
     def column_density_from_absorbed_fraction(A, S):
         """Compute the column density n given an absorbed fraction A and
         saturation parameter S"""
-        print(f'      trying absorbed fraction {A}')
+        # print(f'      trying absorbed fraction {A}')
         OD = -alpha * np.log(1-A) + S*A
         return OD/sigma_0
 
     def absorbed_fraction_from_column_density(n, S):
         """Inverse of above. Compute the absorbed fraction A given a column
         density n and saturation parameter S"""
-        try:
-            result = brentq(lambda A: column_density_from_absorbed_fraction(A, S) - n, -.5 , 1 - 1e-15)
-        except Exception as e:
-            print(e)
-            import IPython
-            IPython.embed()
-        return result
+        return brentq(lambda A: column_density_from_absorbed_fraction(A, S) - n, -.5 , 1 - 1e-15)
 
     def sigma2_y_of_t(t, S):
         """Return the modelled mean squared y position of the scattering
@@ -801,7 +795,7 @@ def compute_linear_density():
         """Return the absorbed fraction at position y and time t for the given
         linear density and saturation parameter"""
         n = column_density_model(y, t, n_1d, S)
-        print(f'    integrating: y={y}, t={t}, n={n}, S={S}')
+        # print(f'    integrating: y={y}, t={t}, n={n}, S={S}')
         A = absorbed_fraction_from_column_density(n, S)
         return A
 
@@ -809,7 +803,7 @@ def compute_linear_density():
         """Model for the integrated absorbed fraction given a particular
         linear density n_1d"""
 
-        print(f'  trying linear density {n_1d}')
+        # print(f'  trying linear density {n_1d}')
         def integrand(y, t):
             return absorbed_fraction_from_linear_density(y, t, n_1d, S)
 
@@ -833,12 +827,14 @@ def compute_linear_density():
         integrated absorbed fraction A_meas"""
         guess = 5/1e-6 # 5 atoms per micron
         # return brentq(lambda n_1d: A_meas_from_linear_density(n_1d, S) - A_meas, -15/1e-6, 15/1e-6)
+
         return fsolve(lambda n_1d: A_meas_from_linear_density(n_1d, S) - A_meas, guess)
-    
+
+
     print('inverting absorption model to obtain linear densities')
 
     with h5py.File(processed_data_h5) as processed_data:
-        A_meas = processed_data['integrated_average_reconstructed_absorbed_fraction']
+        A_meas = processed_data['integrated_reconstructed_average_absorbed_fraction']
         S0 = processed_data['max_absorption_saturation_parameter']
 
         linear_density = np.zeros(A_meas.shape)
@@ -851,6 +847,7 @@ def compute_linear_density():
 
 
 if __name__ == '__main__':
+    pass
     # save_pca_images()
     # compute_mean_raw_images()
     # compute_dark_systematic_offset()
@@ -868,7 +865,7 @@ if __name__ == '__main__':
 
     # Everything above done. Below function implemented but not functioning
     # due to numerical solving issues only:
-    # compute_model_linear_density()
+    compute_linear_density()
 
     # Not yet done:
     # Make OD uncertainty maps
