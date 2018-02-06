@@ -758,7 +758,7 @@ def compute_naive_linear_density():
 
 
 def compute_linear_density():
-    """From the y-integrated absorbed fractions, invert the diffusion model to
+    """From the y-integrated absorbed fractions, invert the absorption model to
     find the linear density at each x position"""
 
     from scipy.optimize import fsolve, brentq
@@ -768,14 +768,13 @@ def compute_linear_density():
     def column_density_from_absorbed_fraction(A, S):
         """Compute the column density n given an absorbed fraction A and
         saturation parameter S"""
-        # print(f'      trying absorbed fraction {A}')
         OD = -alpha * np.log(1-A) + S*A
         return OD/sigma_0
 
     def absorbed_fraction_from_column_density(n, S):
         """Inverse of above. Compute the absorbed fraction A given a column
         density n and saturation parameter S"""
-        return brentq(lambda A: column_density_from_absorbed_fraction(A, S) - n, -.5 , 1 - 1e-15)
+        return brentq(lambda A: column_density_from_absorbed_fraction(A, S) - n, -200 , 1 - 1e-15)
 
     def sigma2_y_of_t(t, S):
         """Return the modelled mean squared y position of the scattering
@@ -795,7 +794,6 @@ def compute_linear_density():
         """Return the absorbed fraction at position y and time t for the given
         linear density and saturation parameter"""
         n = column_density_model(y, t, n_1d, S)
-        # print(f'    integrating: y={y}, t={t}, n={n}, S={S}')
         A = absorbed_fraction_from_column_density(n, S)
         return A
 
@@ -803,7 +801,6 @@ def compute_linear_density():
         """Model for the integrated absorbed fraction given a particular
         linear density n_1d"""
 
-        # print(f'  trying linear density {n_1d}')
         def integrand(y, t):
             return absorbed_fraction_from_linear_density(y, t, n_1d, S)
 
@@ -821,15 +818,10 @@ def compute_linear_density():
         A_meas = 2 / tau * result
         return A_meas
 
-    @np.vectorize # Call elementwise on arrays
     def linear_density_from_a_meas(A_meas, S):
         """Inverse of above. Compute the linear density given a t and y
         integrated absorbed fraction A_meas"""
-        guess = 5/1e-6 # 5 atoms per micron
-        # return brentq(lambda n_1d: A_meas_from_linear_density(n_1d, S) - A_meas, -15/1e-6, 15/1e-6)
-
-        return fsolve(lambda n_1d: A_meas_from_linear_density(n_1d, S) - A_meas, guess)
-
+        return brentq(lambda n_1d: A_meas_from_linear_density(n_1d, S) - A_meas, -20/1e-6, 20/1e-6)
 
     print('inverting absorption model to obtain linear densities')
 
@@ -840,10 +832,9 @@ def compute_linear_density():
         linear_density = np.zeros(A_meas.shape)
         for i in tqdm(range(n_realisations), desc='  computing linear density'):
             for j in tqdm(range(A_meas.shape[1]), desc='    over pixels ...'):
-                print(f'a_meas is {A_meas[i, j]}, S0 is {S0[i, j]}')
                 linear_density[i, j] = linear_density_from_a_meas(A_meas[i, j], S0[i, j])
 
-        h5_save(processed_data, 'model_linear_density', model_linear_density)
+        h5_save(processed_data, 'linear_density', linear_density)
 
 
 if __name__ == '__main__':
@@ -862,9 +853,6 @@ if __name__ == '__main__':
     # compute_max_absorption_saturation_parameter()
     # compute_reconstructed_naive_average_OD()
     # compute_naive_linear_density()
-
-    # Everything above done. Below function implemented but not functioning
-    # due to numerical solving issues only:
     compute_linear_density()
 
     # Not yet done:
