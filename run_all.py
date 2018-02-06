@@ -836,6 +836,36 @@ def compute_linear_density():
 
         h5_save(processed_data, 'linear_density', linear_density)
 
+def plot_linear_density():
+    """Plot the linear densities and compare to "naive" linear densities"""
+    with h5py.File(processed_data_h5) as processed_data:
+        naive_linear_density = processed_data['naive_linear_density']
+        linear_density = processed_data['linear_density']
+
+        outdir_linear_density = 'linear_density'
+        if not os.path.exists(outdir_linear_density):
+            os.mkdir(outdir_linear_density)
+
+        for i in tqdm(range(n_realisations), desc='plotting linear density'):
+            plt.plot(naive_linear_density[i]/1e6, label='naive linear density')
+            plt.plot(linear_density[i]/1e6, label='modelled linear density')
+            plt.ylabel('linear density (per um)')
+            plt.xlabel('x pixel')
+            plt.legend()
+            plt.grid(True)
+            plt.axis([0, 648, -0.5, 16])
+            plt.savefig(os.path.join(outdir_linear_density, f'{i:02d}.png'))
+            plt.clf()
+
+        plt.plot([-5,12], [-5,12], 'k--')
+        for i in tqdm(range(n_realisations), desc='comparing linear density model'):
+            plt.plot(naive_linear_density[i]/1e6, linear_density[i]/1e6, 'ro', markersize=0.5, alpha=0.5)
+        
+        plt.xlabel('naive linear_density (per um)')
+        plt.ylabel('modelled linear density (per um)')
+        plt.grid(True)
+        plt.axis([-5, 12, -5, 12])
+        plt.savefig('linear_density_comparison.png')
 
 if __name__ == '__main__':
     pass
@@ -853,7 +883,7 @@ if __name__ == '__main__':
     # compute_max_absorption_saturation_parameter()
     # compute_reconstructed_naive_average_OD()
     # compute_naive_linear_density()
-    compute_linear_density()
-
+    # compute_linear_density()
+    plot_linear_density()
     # Not yet done:
     # Make OD uncertainty maps
