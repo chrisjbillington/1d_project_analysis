@@ -935,12 +935,22 @@ def plot_linear_density():
             os.mkdir(outdir_linear_density)
 
         for i in tqdm(range(n_realisations), desc='plotting linear density'):
-            plt.fill_between(range(len(linear_density[i])),
-                             11 - (u_linear_density[i])/1e6,
-                             11 + (u_linear_density[i])/1e6,
-                             facecolor='k', alpha=0.5, label=R'$1\sigma$ uncertainty range')
-            plt.plot(naive_linear_density[i]/1e6, label='naive linear density', lw=1)
-            plt.plot(linear_density[i]/1e6, label='modelled linear density', lw=1)
+            # plt.fill_between(range(len(linear_density[i])),
+            #                  11 - (u_linear_density[i])/1e6,
+            #                  11 + (u_linear_density[i])/1e6,
+            #                  facecolor='k', alpha=0.5, label=R'$\pm1\sigma$ uncertainty range')
+            plt.errorbar(range(len(linear_density[i])),
+                         naive_linear_density[i]/1e6,
+                         yerr=u_linear_density[i]/1e6,
+                         label='naive linear density',
+                         fmt='o',  markersize=0.0, capsize=1, lw=0.5)
+
+            plt.errorbar(range(len(linear_density[i])),
+                         linear_density[i]/1e6,
+                         yerr=u_linear_density[i]/1e6,
+                         label='modelled linear density',
+                         fmt='o',  markersize=0.0, capsize=1, lw=0.5)
+
             plt.ylabel('linear density (per um)')
             plt.xlabel('x pixel')
             plt.legend()
@@ -977,6 +987,6 @@ if __name__ == '__main__':
     # compute_reconstructed_naive_average_OD()
     # compute_naive_linear_density()
     # compute_linear_density()
-    make_uncertainty_map()
+    # make_uncertainty_map()
     plot_linear_density()
     
