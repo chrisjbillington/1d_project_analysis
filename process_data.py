@@ -7,6 +7,10 @@ from image_reconstruction.cpu_reconstructor import CPUReconstructor
 
 pi = np.pi
 
+PROCESS_DATA_OUTDIR = 'process_data_output'
+if not os.path.exists(PROCESS_DATA_OUTDIR):
+    os.mkdir(PROCESS_DATA_OUTDIR)
+
 raw_data_h5 = 'raw_data.h5'
 processed_data_h5 = 'processed_data.h5'
 
@@ -85,7 +89,7 @@ def save_pca_images():
     to see what they look like"""
 
     def _save_pca_images(images, name, mask=None):
-        outdir = os.path.join('pca_images', name)
+        outdir = os.path.join(PROCESS_DATA_OUTDIR, 'pca_images', name)
         reconstructor = CPUReconstructor(max_ref_images=n_shots)
         print(f'Saving {name} PCA images to {outdir}/')
         if mask is None:
@@ -128,7 +132,7 @@ def save_pca_images():
 
 def compute_mean_raw_images():
     """Compute the mean atoms, probe and dark frame and save to file"""
-    outdir = 'mean_raw_images'
+    outdir = os.path.join(PROCESS_DATA_OUTDIR, 'mean_raw_images')
     if not os.path.exists(outdir):
         os.mkdir(outdir)
 
@@ -197,7 +201,7 @@ def compute_dark_systematic_offset():
         return ((model_probe - mean_raw_atoms) * ROI_mask).flatten()
 
     print('Computing model for systematic offset in dark counts')
-    outdir = 'dark_systematic_offset'
+    outdir = os.path.join(PROCESS_DATA_OUTDIR, 'dark_systematic_offset')
     if not os.path.exists(outdir):
         os.mkdir(outdir)
 
@@ -339,7 +343,7 @@ def plot_reconstructed_probe_frames():
 
     print("Saving reconstructed probe images")
 
-    outdir = 'reconstructed_probe'
+    outdir = os.path.join(PROCESS_DATA_OUTDIR, 'reconstructed_probe')
     if not os.path.exists(outdir):
         os.mkdir(outdir)
     with h5py.File(raw_data_h5, 'r') as raw_data:
@@ -410,7 +414,7 @@ def plot_reconstructed_dark_frames():
 
     print("Saving reconstructed dark images")
 
-    outdir = 'reconstructed_dark'
+    outdir = os.path.join(PROCESS_DATA_OUTDIR, 'reconstructed_dark')
     if not os.path.exists(outdir):
         os.mkdir(outdir)
 
@@ -458,13 +462,13 @@ def plot_OD_and_absorption_and_saturation_parameter():
     """Save to disk images of the OD and saturation parameter"""
     print("Saving naive OD images, and absorption and saturation images")
 
-    outdir_OD = 'naive_OD'
+    outdir_OD = os.path.join(PROCESS_DATA_OUTDIR, 'naive_OD')
     if not os.path.exists(outdir_OD):
         os.mkdir(outdir_OD)
-    outdir_absorbed_fraction = 'absorbed_fraction'
+    outdir_absorbed_fraction = os.path.join(PROCESS_DATA_OUTDIR, 'absorbed_fraction')
     if not os.path.exists(outdir_absorbed_fraction):
         os.mkdir(outdir_absorbed_fraction)
-    outdir_saturation_parameter = 'saturation_parameter'
+    outdir_saturation_parameter = os.path.join(PROCESS_DATA_OUTDIR, 'saturation_parameter')
     if not os.path.exists(outdir_saturation_parameter):
         os.mkdir(outdir_saturation_parameter)
 
@@ -495,13 +499,13 @@ def compute_averages():
 
     print("Computing average OD, absorbed_fraction and saturation parameter for each final_dipole/short_TOF pair")
 
-    outdir_OD = 'average_naive_OD'
+    outdir_OD = os.path.join(PROCESS_DATA_OUTDIR, 'average_naive_OD')
     if not os.path.exists(outdir_OD):
         os.mkdir(outdir_OD)
-    outdir_absorbed_fraction = 'average_absorbed_fraction'
+    outdir_absorbed_fraction = os.path.join(PROCESS_DATA_OUTDIR, 'average_absorbed_fraction')
     if not os.path.exists(outdir_absorbed_fraction):
         os.mkdir(outdir_absorbed_fraction)
-    outdir_saturation_parameter = 'average_saturation_parameter'
+    outdir_saturation_parameter = os.path.join(PROCESS_DATA_OUTDIR, 'average_saturation_parameter')
     if not os.path.exists(outdir_saturation_parameter):
         os.mkdir(outdir_saturation_parameter)
 
@@ -643,10 +647,10 @@ def reconstruct_absorbed_fraction():
         h5_save(processed_data, 'integrated_reconstructed_average_absorbed_fraction', integrated_reconstructed_average_absorbed_fraction)
 
         # plot them:
-        outdir_OD = 'reconstructed_average_absorbed_fraction'
+        outdir_OD = os.path.join(PROCESS_DATA_OUTDIR, 'reconstructed_average_absorbed_fraction')
         if not os.path.exists(outdir_OD):
             os.mkdir(outdir_OD)
-        outdir_colsums = 'integrated_reconstructed_average_absorbed_fraction'
+        outdir_colsums = os.path.join(PROCESS_DATA_OUTDIR, 'integrated_reconstructed_average_absorbed_fraction')
         if not os.path.exists(outdir_colsums):
             os.mkdir(outdir_colsums)
         for i in tqdm(range(n_realisations), desc='  Saving images'):
@@ -677,7 +681,7 @@ def plot_reconstructed_absorbed_fraction():
         reconstructed_absorbed_fraction_ROI = processed_data['reconstructed_absorbed_fraction_ROI']
         absorbed_fraction_ROI = processed_data['absorbed_fraction'][:, ROI_y_start:ROI_y_stop, :]
          # plot the averaged data:
-        outdir_A = 'reconstructed_absorbed_fraction'
+        outdir_A = os.path.join(PROCESS_DATA_OUTDIR, 'reconstructed_absorbed_fraction')
         if not os.path.exists(outdir_A):
             os.mkdir(outdir_A)
         for i in tqdm(range(n_shots), desc='  Saving images'):
@@ -728,7 +732,7 @@ def compute_max_absorption_saturation_parameter():
         y0 = a * x**2 + m*x + c
         plt.imshow(mean_A, vmin=0, vmax=0.1)
         plt.plot(x, y0, 'r-', linewidth=0.5)
-        plt.savefig('max_absorption_pos.png', dpi=300)
+        plt.savefig(os.path.join(PROCESS_DATA_OUTDIR, 'max_absorption_pos.png'), dpi=300)
         plt.clf()
 
         # Interpolate the saturation parameter at these points for each
@@ -750,7 +754,7 @@ def compute_reconstructed_naive_average_OD():
     A is the reconstructed average absorbed fraction and S is the saturation
     parameter at the max absorption y position"""
 
-    outdir = 'reconstructed_naive_average_OD'
+    outdir = os.path.join(PROCESS_DATA_OUTDIR, 'reconstructed_naive_average_OD')
     if not os.path.exists(outdir):
         os.mkdir(outdir)
  
@@ -774,7 +778,7 @@ def compute_naive_linear_density():
 
         print('computing naive linear density')
 
-        outdir_linear_density = 'naive_reconstructed_average_linear_density'
+        outdir_linear_density = os.path.join(PROCESS_DATA_OUTDIR, 'naive_reconstructed_average_linear_density')
         if not os.path.exists(outdir_linear_density):
             os.mkdir(outdir_linear_density)
 
@@ -901,7 +905,7 @@ def make_uncertainty_map():
             matching_shots = (final_dipole == dipole_val) & (short_TOF == tof_val)
             u_A[i] = reconstructed_absorbed_fraction_ROI[matching_shots, :, :].std(axis=0) / np.sqrt(matching_shots.sum())
 
-        outdir_uA = 'uncertainty_absorbed_fraction'
+        outdir_uA = os.path.join(PROCESS_DATA_OUTDIR, 'uncertainty_absorbed_fraction')
         if not os.path.exists(outdir_uA):
             os.mkdir(outdir_uA)
 
@@ -930,7 +934,7 @@ def plot_linear_density():
         linear_density = processed_data['linear_density']
         u_linear_density = processed_data['u_linear_density']
 
-        outdir_linear_density = 'linear_density'
+        outdir_linear_density = os.path.join(PROCESS_DATA_OUTDIR, 'linear_density')
         if not os.path.exists(outdir_linear_density):
             os.mkdir(outdir_linear_density)
 
@@ -967,7 +971,7 @@ def plot_linear_density():
         plt.ylabel('modelled linear density (per um)')
         plt.grid(True)
         plt.axis([-5, 12, -5, 12])
-        plt.savefig('linear_density_comparison.png')
+        plt.savefig(os.path.join(PROCESS_DATA_OUTDIR, 'linear_density_comparison.png'))
 
 if __name__ == '__main__':
     pass

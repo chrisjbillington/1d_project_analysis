@@ -1,0 +1,5 @@
+syntax: glob
+__pycache__/*
+processed_data.h5
+raw_data.h5
+process_data_output/*
