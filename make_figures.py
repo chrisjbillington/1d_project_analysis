@@ -3,6 +3,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import constants
+from scipy.stats import norm
 from tqdm import tqdm
 from lmfit import Parameters, minimize, report_fit, Minimizer
 from yang_yang_1dbg import bethe_integrator
@@ -260,15 +261,61 @@ def plot_density_data(save_plots=False):
     #####################################################################################
 
 def plot_figure_1_draft(save_plots=False):
+
+    def partial_derivatives(function, x, params, u_params):
+        _, _, model_at_center = function(x, *params)
+        partial_derivatives = []
+        for i, (param, u_param) in enumerate(zip(params, u_params)):
+            d_param = u_param/1e6
+            params_with_partial_differential = np.zeros(len(params))
+            params_with_partial_differential[:] = params[:]
+            params_with_partial_differential[i] = param + d_param
+            _, _, model_at_partial_differential = function(x, *params_with_partial_differential)
+            partial_derivative = (model_at_partial_differential - model_at_center)/d_param
+            partial_derivatives.append(partial_derivative)
+        return partial_derivatives
+
+    def model_uncertainty(function, x, params, covariance):
+        u_params = [np.sqrt(abs(covariance[i,i]))  for i in range(len(params))]
+        model_partial_derivatives = partial_derivatives(function, x, params, u_params)
+        try:
+            squared_model_uncertainty = np.zeros(x.shape)
+        except TypeError:
+            squared_model_uncertainty = 0
+        for i in range(len(params)):
+            for j in range(len(params)):
+                squared_model_uncertainty += model_partial_derivatives[i]*model_partial_derivatives[j]*covariance[i,j]
+        return np.sqrt(squared_model_uncertainty)
+
+    def model_shaded_uncertainty(function, x, params, covariance, yrange=None, resolution=1024, 
+                                columns_normalised=True):
+        _, _, model_mean = function(x, *params)
+        model_stddev = model_uncertainty(function, x, params, covariance)
+        if yrange is None:
+            yrange = [(model_mean - 10*model_stddev).min(), (model_mean + 10*model_stddev).max()]
+        y = np.linspace(yrange[0], yrange[1], resolution)
+        Model_Mean, Y = np.meshgrid(model_mean, y)
+        Model_Stddev, Y = np.meshgrid(model_stddev, y)
+        if columns_normalised:
+            probability = np.exp(-(Y - Model_Mean)**2/(2*Model_Stddev**2))
+        else:
+            probability = norm.pdf(Y, Model_Mean, Model_Stddev)
+        return probability, [x.min(), x.max(), y.min(), y.max()]
+
     schematic_setup_image = plt.imread('Fig1_Schematic.jpg')
     in_situ_single_shot_OD = load_data(processed_data_h5, 'naive_OD')[409, 180:255, :]
     integrated_single_shot_density = in_situ_single_shot_OD.sum(0)*pix_size/sigma_0
     average_naive_linear_density = load_data(processed_data_h5, 'naive_linear_density')[1]
     fit_linear_density = load_data(fit_outputs_h5, 'global_fit_density_output')[1]
-    fit_linear_density[-1] *= 0 # temporary
+    #fit_linear_density[-1] *= 0 # temporary
     final_dipole_realization = 0.525 #load_data(raw_data_h5, 'final_dipole')[409]
     short_TOF_realization = 0.0 #load_data(raw_data_h5, 'short_TOF')[409]
     potential_parameters = load_data(fit_outputs_h5, 'global_fit_pot_set')
+    full_cov_matrix = load_data(fit_outputs_h5, 'global_fit_covariance_matrix')
+    V_cov_matrix = np.ones((6, 6))
+    V_cov_matrix[0:4, 0:4] = full_cov_matrix[48:52, 48:52]
+    V_cov_matrix[5, :] = full_cov_matrix[-1, -6::]
+    V_cov_matrix[:, 5] = full_cov_matrix[-6::, -1]
     ODx_axis = np.linspace(-np.size(in_situ_single_shot_OD[0,:])/2, 
                           np.size(in_situ_single_shot_OD[0,:])/2, 
                           np.size(in_situ_single_shot_OD[0,:]))
@@ -276,6 +323,10 @@ def plot_figure_1_draft(save_plots=False):
                           np.size(in_situ_single_shot_OD[:,0])/2, 
                           np.size(in_situ_single_shot_OD[:,0]))
     antitrap, longtrap, V_total = V_potential_model(ODx_axis, *potential_parameters)
+    probability, extent = model_shaded_uncertainty(V_potential_model, ODx_axis, potential_parameters, V_cov_matrix)
+
+    import IPython
+    IPython.embed()
 
     __fig__ = setup_figure(figsize=(6, 12))
     ax1 = plt.subplot(411)
@@ -285,13 +336,15 @@ def plot_figure_1_draft(save_plots=False):
 
     # **** HAVE TO ADD SHADED UNCERTAINTY ****
     ax2 = plt.subplot(412)
+    im2 = ax2.imshow(1-probability, origin='lower-left', aspect='auto',  extent=extent, 
+               cmap='pink_r', vmin=1e-2, vmax=1)
     ax2.plot(ODx_axis*pix_size/um, V_total, linewidth=1.0, color='k', label='Total')
     ax2.plot(ODx_axis*pix_size/um, antitrap, linewidth=2.0, linestyle='--',
              color='C2', alpha=0.8, label='Anti-trap')
     ax2.plot(ODx_axis*pix_size/um, longtrap, linewidth=2.0, linestyle='--',
              color='r', alpha=0.8, label='Long Trap')
     ax2.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.5, which='major')
-    plt.ylim([-1e3, 45e3])
+    plt.ylim([-1e3, 25e3])
     label_current_ax(fig=__fig__, xlabel='$z\,[\mu m]$', ylabel='$V\,[\,\mathrm{Hz}\,]$')
     plt.title('(b) Longitudinal potential', loc='left')
     plt.legend()
@@ -312,7 +365,7 @@ def plot_figure_1_draft(save_plots=False):
     ax4.scatter(ODx_axis*pix_size/um, average_naive_linear_density/(1/um),
                 c='b', s=10.0, edgecolor='k', linewidth=1.0, 
                 label='Mean distribution', alpha=0.5)
-    ax4.plot(ODx_axis*pix_size/um, fit_linear_density/(1/um),
+    ax4.plot(ODx_axis*pix_size/um, fit_linear_density/(1/um), # **************
              color='r', linewidth=1.0, linestyle='-', alpha=0.75, label='Fit')
     ax4.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
     plt.ylim([-10., 50.])
@@ -336,6 +389,77 @@ def plot_figure_1_draft(save_plots=False):
     #####################################################################################
 
 def plot_figure_2_draft(save_plots=False):
+
+    W, mW, ms = 1.0, 1e-3, 1e-3
+
+    def half_gauss(t, duration, yi, yf):
+        return ((yf-yi)*(1-norm.sf(t, loc=t[0]+duration/2, scale=0.15*duration))+yi).tolist()
+
+    def hold_value(t, y0):
+        return (y0*np.ones_like(t)).tolist()
+
+    array_ize = lambda some_list: np.array(some_list).flatten()
+
+    n_points = 2**5
+    green_ramp, long_ramp, cross_ramp = [], [], []
+
+    t_segment_0 = np.linspace(0, 250*ms, n_points)
+    green_ramp.append(half_gauss(t_segment_0, 250*ms, 0*W, 50*mW))
+    long_ramp.append(hold_value(t_segment_0, 0*W))
+    cross_ramp.append(hold_value(t_segment_0, 550*mW))
+
+    t_segment_1 = np.linspace(t_segment_0[-1], t_segment_0[-1]+250*ms, n_points)
+    green_ramp.append(hold_value(t_segment_1, 50*mW))
+    long_ramp.append(hold_value(t_segment_1, 0*W))
+    cross_ramp.append(half_gauss(t_segment_1, 250*ms, 550*mW, 200*mW))
+
+    t_segment_2 = np.linspace(t_segment_1[-1], t_segment_1[-1]+250*ms, n_points)
+    green_ramp.append(hold_value(t_segment_2, 50*mW))
+    long_ramp.append(half_gauss(t_segment_2, 250*ms, 0*W, 500*mW))
+    cross_ramp.append(hold_value(t_segment_2, 200*mW))
+
+    t_segment_3 = np.linspace(t_segment_2[-1], t_segment_2[-1]+250*ms, n_points)
+    green_ramp.append(half_gauss(t_segment_3, 250*ms, 50*mW, 1*W))
+    long_ramp.append(hold_value(t_segment_3, 500*mW))
+    cross_ramp.append(half_gauss(t_segment_3, 250*ms, 200*mW, 0*W))
+
+    time = np.concatenate((t_segment_0, t_segment_1, t_segment_2, t_segment_3))
+    green_ramp, long_ramp, cross_ramp = array_ize(green_ramp), array_ize(long_ramp), array_ize(cross_ramp)
+
+    __fig__ = setup_figure()
+    ax1 = plt.subplot(111)
+    ax1.plot(time/ms, green_ramp, marker='o', markeredgecolor='k', c='limegreen', 
+             markeredgewidth=1.0, lw=1.0, label='Blue-detuned')
+    ax1.plot(time/ms, long_ramp, marker='o', markeredgecolor='k', c='maroon', 
+             markeredgewidth=1.0, lw=1.0, label='Red-detuned')
+    ax1.plot(time/ms, cross_ramp, marker='o', markeredgecolor='k', c='cornflowerblue', 
+             markeredgewidth=1.0,lw=1.0, label='BEC-cross dipole trap')
+    ax1.axvline(250., c='k', ls='--', lw=1.5, alpha=0.5)
+    ax1.axvline(500., c='k', ls='--', lw=1.5, alpha=0.5)
+    ax1.axvline(750., c='k', ls='--', lw=1.5, alpha=0.5)
+    ax1.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
+    plt.ylim([-0.1, 1.0])
+    plt.xlim([-0., 1e3])
+    label_current_ax(__fig__, xlabel='$t \,[ms]$', ylabel='Power [W]')
+    #plt.title('Loading ramps', loc='left')
+    plt.tight_layout()
+    plt.legend()
+
+    if save_plots:
+        plt.savefig(f'Fig_2.pdf')
+        plt.clf()
+
+    #####################################################################################
+    #####                                                                           #####
+    #####                    ######   ######   ######         ######                #####
+    #####                    ##         ##     ##                 ##                #####
+    #####     ########       ####       ##     ## ###         ######    ########    #####
+    #####                    ##         ##     ##  ## ###         ##                #####
+    #####                    ##       ######   ###### ###     ######                #####
+    #####                                                                           #####
+    #####################################################################################
+
+def plot_figure_3_draft(save_plots=False):
     A_ix, B_ix = 4, 20
     density_A = load_data(processed_data_h5, 'naive_linear_density')[A_ix]
     density_B = load_data(processed_data_h5, 'naive_linear_density')[B_ix]
@@ -385,7 +509,7 @@ def plot_figure_2_draft(save_plots=False):
     plt.legend()
 
     if save_plots:
-        plt.savefig(f'Fig2_a.pdf')
+        plt.savefig(f'Fig_3a.pdf')
         plt.clf()
 
     # Temperature calibration
@@ -464,7 +588,7 @@ def plot_figure_2_draft(save_plots=False):
     cbar.set_clim(0., ax1_shading.max())
     
     if save_plots:
-        plt.savefig(f'Fig_2b.pdf')
+        plt.savefig(f'Fig_3b.pdf')
         plt.clf()
 
     __fig__ = setup_figure()
@@ -482,65 +606,11 @@ def plot_figure_2_draft(save_plots=False):
     plt.legend()
 
     if save_plots:
-        plt.savefig(f'Fig2_c.pdf')
-        plt.clf()
-
-    #####################################################################################
-    #####                                                                           #####
-    #####                ######   ######   #### ####  ######  ######                #####
-    #####                ##  ##   ##  ##   ## ### ##  ##  ##  ##                    #####
-    #####    #######     ######   ######   ##  #  ##  ######  ######     ########   #####
-    #####                ##  ##   ##  ##   ##     ##  ##          ##                #####
-    #####                ##   #   ##  ##   ##     ##  ##      ######                #####
-    #####                                                                           #####
-    #####################################################################################
-
-def plot_loading_ramps(save_plots=False):
-    tau_0 = np.linspace(0, 0.250, 2**10)
-    tau_1 = np.linspace(0, 0.250, 2**10) + tau_0[-1]
-    tau_2 = np.linspace(0, 0.250, 2**10) + tau_1[-1]
-    tau_3 = np.linspace(0, 0.250, 2**10) + tau_2[-1]
-    time = np.concatenate((tau_0, tau_1, tau_2, tau_3))
-    half_gauss = lambda t, yf, tau, yi, t0: (yf-yi)*np.exp(-(t-t0)**2/(2*tau**2)) + yi
-    ramp_LG, ramp_ODT, ramp_long = [], [], []
-    ramp_LG.append(half_gauss(tau_0, 0.1, 0.25**2, 0., tau_0[-1]))
-    ramp_LG.append(0.1*np.ones_like(tau_1))
-    ramp_LG.append(0.1*np.ones_like(tau_2))
-    ramp_LG.append(half_gauss(tau_3, 1.0, 0.25**2, 0.1, tau_3[-1]))
-    ramp_long.append(0.0*np.ones_like(tau_0))
-    ramp_long.append(0.0*np.ones_like(tau_1))
-    ramp_long.append(half_gauss(tau_2, 1.0, 0.25**2, 0.0, tau_2[-1]))
-    ramp_long.append(1.0*np.ones_like(tau_3))
-    ramp_ODT.append(1.0*np.ones_like(tau_0))
-    ramp_ODT.append(half_gauss(tau_1, 0.75, 0.25**2, 1.0, tau_1[-1]))
-    ramp_ODT.append(0.75*np.ones_like(tau_2))
-    ramp_ODT.append(half_gauss(tau_3, 0.0, 0.25**2, 0.75, tau_3[-1]))
-    ramp_LG, ramp_long, ramp_ODT = (np.array(ramp_LG).flatten(), 
-                np.array(ramp_long).flatten(), np.array(ramp_ODT).flatten())
-
-    __fig__ = setup_figure()
-    ax1 = plt.subplot(111)
-    ax1.step(time/ms, ramp_LG, c='limegreen', lw=1.0, label='Blue-detuned')
-    ax1.step(time/ms, ramp_long, c='maroon', lw=1.0, label='Red-detuned')
-    ax1.step(time/ms, ramp_ODT, c='cornflowerblue', lw=1.0, label='BEC-cross dipole trap')
-    ax1.axvline(250., c='k', ls='--', lw=1.0, alpha=0.5)
-    ax1.axvline(500., c='k', ls='--', lw=1.0, alpha=0.5)
-    ax1.axvline(750., c='k', ls='--', lw=1.0, alpha=0.5)
-    ax1.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
-    plt.ylim([-0.1, 1.1])
-    plt.xlim([-0., 1e3])
-    label_current_ax(__fig__, xlabel='$t \,[ms]$')
-    plt.title('Loading procedure', loc='left')
-    plt.tight_layout()
-    plt.legend()
-
-    if save_plots:
-        plt.savefig(f'Fig_ramps.pdf')
+        plt.savefig(f'Fig_3c.pdf')
         plt.clf()
 
 
-
-def _V(save_plots=False):
+#def _V(save_plots=False):
     
     # # Potential model, expansion and sample     
     # def quadratic_residuals(pars, x_data, y_data, eps_ydata):
@@ -593,5 +663,5 @@ def _V(save_plots=False):
 if __name__ == '__main__':
     #plot_density_data(save_plots=True)
     #plot_figure_1_draft(save_plots=True)
-    plot_figure_2_draft(save_plots=True)
-    #plot_loading_ramps(save_plots=True)
+    #plot_figure_2_draft(save_plots=True)
+    #plot_figure_3_draft(save_plots=True)

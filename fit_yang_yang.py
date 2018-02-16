@@ -51,6 +51,7 @@ def load_data():
         data = np.array(processed_data['linear_density'])
         data[10, 646] = 0.
         uncertainty = np.array(processed_data['u_linear_density'])
+        uncertainty[10, 646] = 0.
         # The values of the realisation variables:
         final_dipole_realisations = np.array(processed_data['realisation_final_dipole'])
         short_TOF_realisations = np.array(processed_data['realisation_short_TOF'])
@@ -174,29 +175,11 @@ def lmfit_nx(xdata, ydata, dydata):
     #####                                                                           #####
     #####################################################################################
 
-def compute_nxT(x, mu0, mu1, mu2, mu3, mu4, mu5, 
-                mu6, mu7, mu8, mu9, mu10, mu11, 
-                mu12, mu13, mu14, mu15, mu16, 
-                mu17, mu18, mu19, mu20, mu21, 
-                m22, m23, T0, T1, T2, 
-                T3, T4, T5, T6, T7, 
-                T8, T9, T10, T11, T12, 
-                T13, T14, T15, T16, T17, 
-                T18, T19, T20, T21, T22, 
-                T23, A_a, x0_a, dx_a,
-                A_t, x0_t, dx_t):
-    mus = ([mu0, mu1, mu2, mu3, mu4, mu5, mu6, mu7, 
-            mu8, mu9, mu10, mu11, mu12, mu13, 
-            mu14, mu15, mu16, mu17, mu18,
-            mu19, mu20, mu21, m22, m23])
-    Ts =  ([T0, T1, T2, T3, T4, T5, T6,
-            T7, T8, T9, T10, T11, T12, T13,
-            T14, T15, T16, T17, T18,
-            T19, T20, T21, T22, T23])
+def compute_nxT(x, mus, Ts, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
     V_anti, _, V_total = V_potential_model(x, A_a, x0_a, dx_a, A_t, x0_t, dx_t, break_LDA=True)
     f_perp = V_anti
-    n = np.zeros((24, int(648/4)))
-    for T_index in range(24):
+    n = np.zeros((len(Ts), np.size(x)))
+    for T_index in range(len(Ts)):
         glob_mu, glob_T = mus[T_index], Ts[T_index]
         mu_index = 0
         for mui in tqdm(glob_mu - V_total):
@@ -208,93 +191,44 @@ def compute_nxT(x, mu0, mu1, mu2, mu3, mu4, mu5,
             mu_index += 1
     return n
 
-def lmfit_nxT(xdata, ydata, dydata):
+def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
     params = Parameters()
-    params.add('mu0', value=1.8e3, min=-1e3, max=3e3, vary=True)
-    params.add('mu1', value=1.9e3, min=-1e3, max=3e3, vary=True)
-    params.add('mu2', value=1.7e3, min=-1e3, max=3e3, vary=True)
-    params.add('mu3', value=1.6e3, min=-1e3, max=3e3, vary=True)
-    params.add('mu4', value=1.5e3, min=-1e3, max=3e3, vary=True)
-    params.add('mu5', value=1.4e3, min=-1e3, max=3e3, vary=True)
-    params.add('mu6', value=1.2e3, min=-1e3, max=3e3, vary=True)
-    params.add('mu7', value=1.2e3, min=-1e3, max=3e3, vary=True)
-    params.add('mu8', value=1.1e3, min=-1e3, max=2.5e3, vary=True)
-    params.add('mu9', value=1.1e3, min=-1e3, max=2.5e3, vary=True)
-    params.add('mu10', value=1.0e3, min=-1e3, max=2.5e3, vary=True)
-    params.add('mu11', value=0.9e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu12', value=0.8e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu13', value=0.7e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu14', value=0.6e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu15', value=0.5e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu16', value=0.4e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu17', value=0.3e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu18', value=0.2e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu19', value=0.5e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu20', value=0.4e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu21', value=0.3e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu22', value=0.2e3, min=-1e3, max=2e3, vary=True)
-    params.add('mu23', value=0.1e3, min=-1e3, max=2e3, vary=True)
-    params.add('T0', value=190e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T1', value=180e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T2', value=170e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T3', value=160e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T4', value=150e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T5', value=140e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T6', value=130e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T7', value=120e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T8', value=110e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T9', value=100e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T10', value=90e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T11', value=80e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T12', value=70e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T13', value=60e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T14', value=50e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T15', value=40e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T16', value=30e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T17', value=20e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T18', value=15e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T19', value=50e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T20', value=50e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T21', value=50e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T22', value=50e-9, min=1e-10, max=1.5e-6, vary=True)
-    params.add('T23', value=50e-9, min=1e-10, max=1.5e-6, vary=True)
+    if mu_guess is None:
+        mu_guess = 1e3*np.ones_like(add_to_fit)
+    if T_guess is None:
+        T_guess = 50e-9*np.ones_like(add_to_fit)
+    def add_mu_parameter(i, fix=False):
+        params.add('mu'+str(i), value=mu_guess[i], min=-1e3, max=3e3, vary = not fix)
+    def add_T_parameter(i, fix=False):
+        params.add('T'+str(i), value=T_guess[i], min=1e-10, max=1.5e-6, vary = not fix)
+    for slice_index in add_to_fit:
+        add_mu_parameter(slice_index, fix=False)
+        add_T_parameter(slice_index, fix=False)   
     params.add('Antitrap_height', value=16.13e3, min=8e3, max=22e3, vary=True)
-    params.add('Antitrap_center', value=-7.21, min=-70, max=70, vary=True)
+    params.add('Antitrap_center', value=-7.21, min=-20, max=20, vary=True)
     params.add('Antitrap_width', value=2*185.2, min=300, max=450, vary=True)
     params.add('Trap_depth', value=-25e3, min=-50e3, max=-8e3, vary=True)
-    params.add('Trap_center', value=-9.95, min=-70, max=70, vary=False)
-    params.add('Trap_width', value=139.92, min=70, max=250, vary=True)
+    params.add('Trap_center', value=-9.95, min=-20, max=20, vary=True)
+    params.add('Trap_width', value=139.92, min=90, max=250, vary=True)
     # Residuals
     def residuals_nxT(pars, xdata, ydata, epsdata):
-        mu0, T0, mu1, T1 = pars['mu0'], pars['T0'], pars['mu1'], pars['T1'] 
-        mu2, T2, mu3, T3 = pars['mu2'], pars['T2'], pars['mu3'], pars['T3'] 
-        mu4, T4, mu5, T5 = pars['mu4'], pars['T4'], pars['mu5'], pars['T5']
-        mu6, T6, mu7, T7 = pars['mu6'], pars['T6'], pars['mu7'], pars['T7']
-        mu8, T8, mu9, T9 = pars['mu8'], pars['T8'], pars['mu9'], pars['T9']
-        mu10, T10, mu11, T11 = pars['mu10'], pars['T10'], pars['mu11'], pars['T11']
-        mu12, T12, mu13, T13 = pars['mu12'], pars['T12'], pars['mu13'], pars['T13']
-        mu14, T14, mu15, T15 = pars['mu14'], pars['T14'], pars['mu15'], pars['T15']
-        mu16, T16, mu17, T17 = pars['mu16'], pars['T16'], pars['mu17'], pars['T17']
-        mu18, T18, mu19, T19 = pars['mu18'], pars['T18'], pars['mu19'], pars['T19'] 
-        mu20, T20, mu21, T21 = pars['mu20'], pars['T20'], pars['mu21'], pars['T21']
-        mu22, T22, mu23, T23 = pars['mu22'], pars['T22'], pars['mu23'], pars['T23']
+        mus ,Ts = [], []
+        for slice_index in add_to_fit:
+            mus.append(pars['mu'+str(slice_index)])
+            Ts.append(pars['T'+str(slice_index)])
         A_anti, x0_anti, dx_anti = pars['Antitrap_height'], pars['Antitrap_center'], pars['Antitrap_width']
         A_trap,  x0_trap, dx_trap = pars['Trap_depth'], pars['Trap_center'], pars['Trap_width']
-        model = compute_nxT(xdata, mu0, mu1, mu2, mu3, mu4, mu5, mu6, mu7, 
-                                   mu8, mu9, mu10, mu11, mu12, mu13, mu14,
-                                   mu15, mu16, mu17, mu18, mu19, mu20, mu21, 
-                                   mu22, mu23, T0, T1, T2, T3, T4, T5, 
-                                   T6, T7, T8, T9, T10, T11, T12, T13, 
-                                   T14, T15, T16, T17, T18, T19, T20, 
-                                   T21, T22, T23, A_anti, x0_anti, dx_anti, 
-                                   A_trap, x0_trap, dx_trap)
+        model = compute_nxT(xdata, mus, Ts, A_anti, x0_anti, dx_anti, A_trap, x0_trap, dx_trap)
         return (ydata-model).flatten()/epsdata.flatten()
     # Callback function
     def nxT_callback(params, iteration, resid, *fcn_args, **fcn_kws):
         with h5py.File(fit_outputs_h5) as fit_outputs:
             if iteration == 1:
-                del fit_outputs['partial_residuals']
-                del fit_outputs['partial_sigmas']
+                try:
+                    del fit_outputs['partial_residuals']
+                    del fit_outputs['partial_sigmas']
+                except KeyError:
+                    print("New file")
             if iteration > 1:
                 partial_residuals = list(fit_outputs['partial_residuals'])
                 partial_sigmas = list(fit_outputs['partial_sigmas'])
@@ -311,7 +245,7 @@ def lmfit_nxT(xdata, ydata, dydata):
         return None
     minimizer = Minimizer(residuals_nxT, params, fcn_args=(xdata, ydata, dydata), 
                           iter_cb=nxT_callback, nan_policy='omit')
-    return minimizer.minimize()
+    return minimizer.minimize(method='leastsq')
 
     #####################################################################################
     #####                                                                           #####
@@ -378,15 +312,22 @@ def global_fit():
     eos_data, u_eos_data, _, _ = load_data()
     binned_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in eos_data])
     binned_u_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in u_eos_data])
-    x_data = np.linspace(-np.size(binned_n_data[0,:])/2, 
-                          np.size(binned_n_data[0,:])/2, 
+    x_data = np.linspace(-np.size(eos_data[0,:])/2, 
+                          np.size(eos_data[0,:])/2, 
                           np.size(binned_n_data[0,:]))
-    glob_fit_result = lmfit_nxT(x_data, binned_n_data, binned_u_n_data)
+    mu_guess = np.linspace(2e3, 100, 24).tolist()
+    T_guess = np.linspace(200e-9, 10e-9, 24).tolist()
+    glob_fit_result = lmfit_nxT(x_data, binned_n_data, binned_u_n_data,
+                                add_to_fit=range(24), mu_guess=mu_guess, T_guess=T_guess)
+    report_fit(glob_fit_result)
     glob_cov_matrix = glob_fit_result.covar
     glob_fit_pars = np.array([glob_fit_result.params[key].value for key in glob_fit_result.params.keys()])
     glob_fit_pars_err = np.sqrt(np.diag(glob_cov_matrix))
+    x_data = np.linspace(-np.size(eos_data[0,:])/2, 
+                          np.size(eos_data[0,:])/2, 
+                          np.size(eos_data[0,:]))
     glob_fit_density = compute_nxT(x_data, *glob_fit_pars)
-    glob_fit_potential = V_potential_model(x_data, *glob_fit_pars[-6::], break_LDA=False)[2]
+    _, _, glob_fit_potential = V_potential_model(x_data, *glob_fit_pars[-6::], break_LDA=True)
     with h5py.File(fit_outputs_h5) as fit_outputs:
         h5_save(fit_outputs, 'global_fit_mu0_set', glob_fit_pars[0:24])
         h5_save(fit_outputs, 'global_fit_temp_set', glob_fit_pars[24:48])
@@ -402,5 +343,5 @@ def global_fit():
     IPython.embed()
 
 if __name__ == '__main__':
-    #local_fit(slice_index=0)
+    #local_fit(slice_index=None)
     global_fit()
