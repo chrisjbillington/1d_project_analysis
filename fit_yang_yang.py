@@ -320,23 +320,25 @@ def global_fit():
     glob_fit_result = lmfit_nxT(x_data, binned_n_data, binned_u_n_data,
                                 add_to_fit=range(24), mu_guess=mu_guess, T_guess=T_guess)
     report_fit(glob_fit_result)
-    glob_cov_matrix = glob_fit_result.covar
+    glob_cov_matrix = np.array(glob_fit_result.covar)
     glob_fit_pars = np.array([glob_fit_result.params[key].value for key in glob_fit_result.params.keys()])
     glob_fit_pars_err = np.sqrt(np.diag(glob_cov_matrix))
     x_data = np.linspace(-np.size(eos_data[0,:])/2, 
                           np.size(eos_data[0,:])/2, 
                           np.size(eos_data[0,:]))
-    glob_fit_density = compute_nxT(x_data, *glob_fit_pars)
+    mus = glob_fit_pars[0:len(mu_guess)], 
+    Ts = glob_fit_pars[len(mu_guess):2*len(mu_guess)]
+    glob_fit_density = compute_nxT(x_data, mus, Ts, *glob_fit_pars[-6::])
     _, _, glob_fit_potential = V_potential_model(x_data, *glob_fit_pars[-6::], break_LDA=True)
     with h5py.File(fit_outputs_h5) as fit_outputs:
-        h5_save(fit_outputs, 'global_fit_mu0_set', glob_fit_pars[0:24])
-        h5_save(fit_outputs, 'global_fit_temp_set', glob_fit_pars[24:48])
+        h5_save(fit_outputs, 'global_fit_mu0_set', mus)
+        h5_save(fit_outputs, 'global_fit_temp_set', Ts)
         h5_save(fit_outputs, 'global_fit_pot_set', glob_fit_pars[-6::])
         h5_save(fit_outputs, 'global_fit_redchi', glob_fit_result.redchi)
         h5_save(fit_outputs, 'global_fit_u_mu0_set', glob_fit_pars_err[0:24])
         h5_save(fit_outputs, 'global_fit_u_temp_set', glob_fit_pars_err[24:48])
         h5_save(fit_outputs, 'global_fit_u_pot_set', glob_fit_pars_err[-6::])
-        h5_save(fit_outputs, 'global_fit_covariance_matrix', np.array(glob_cov_matrix))
+        h5_save(fit_outputs, 'global_fit_covariance_matrix', glob_cov_matrix)
         h5_save(fit_outputs, 'global_fit_density_output', glob_fit_density)
         h5_save(fit_outputs, 'global_fit_pot_output', glob_fit_potential)
     import IPython
