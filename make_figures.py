@@ -663,5 +663,5 @@ def plot_figure_3_draft(save_plots=False):
 if __name__ == '__main__':
     #plot_density_data(save_plots=True)
     #plot_figure_1_draft(save_plots=True)
-    #plot_figure_2_draft(save_plots=True)
+    plot_figure_2_draft(save_plots=True)
     #plot_figure_3_draft(save_plots=True)

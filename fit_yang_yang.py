@@ -178,7 +178,7 @@ def lmfit_nx(xdata, ydata, dydata):
 def compute_nxT(x, mus, Ts, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
     V_anti, _, V_total = V_potential_model(x, A_a, x0_a, dx_a, A_t, x0_t, dx_t, break_LDA=True)
     f_perp = V_anti
-    n = np.zeros((len(Ts), np.size(x)))
+    n = np.zeros((len(mus), np.size(x)))
     for T_index in range(len(Ts)):
         glob_mu, glob_T = mus[T_index], Ts[T_index]
         mu_index = 0
@@ -203,11 +203,12 @@ def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
         params.add('T'+str(i), value=T_guess[i], min=1e-10, max=1.5e-6, vary = not fix)
     for slice_index in add_to_fit:
         add_mu_parameter(slice_index, fix=False)
+    for slice_index in add_to_fit:
         add_T_parameter(slice_index, fix=False)   
-    params.add('Antitrap_height', value=16.13e3, min=8e3, max=22e3, vary=True)
+    params.add('Antitrap_height', value=16.13e3, min=12e3, max=22e3, vary=True)
     params.add('Antitrap_center', value=-7.21, min=-20, max=20, vary=True)
     params.add('Antitrap_width', value=2*185.2, min=300, max=450, vary=True)
-    params.add('Trap_depth', value=-25e3, min=-50e3, max=-8e3, vary=True)
+    params.add('Trap_depth', value=-25e3, min=-50e3, max=-1e3, vary=True)
     params.add('Trap_center', value=-9.95, min=-20, max=20, vary=True)
     params.add('Trap_width', value=139.92, min=90, max=250, vary=True)
     # Residuals
@@ -243,7 +244,9 @@ def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
             h5_save(fit_outputs, 'partial_sigmas', partial_sigmas)
         print(f'Iteration: {iteration:2d}')
         return None
-    minimizer = Minimizer(residuals_nxT, params, fcn_args=(xdata, ydata, dydata), 
+    data_subset = np.array([ydata[j, :] for j in add_to_fit])
+    u_data_subset = np.array([dydata[j, :] for j in add_to_fit])
+    minimizer = Minimizer(residuals_nxT, params, fcn_args=(xdata, data_subset, u_data_subset), 
                           iter_cb=nxT_callback, nan_policy='omit')
     return minimizer.minimize(method='leastsq')
 
@@ -315,10 +318,11 @@ def global_fit():
     x_data = np.linspace(-np.size(eos_data[0,:])/2, 
                           np.size(eos_data[0,:])/2, 
                           np.size(binned_n_data[0,:]))
-    mu_guess = np.linspace(2e3, 100, 24).tolist()
-    T_guess = np.linspace(200e-9, 10e-9, 24).tolist()
+    subset = list(range(10, 24))
+    mu_guess = np.linspace(1e3, 100, 24).tolist()
+    T_guess = np.linspace(100e-9, 50e-9, 24).tolist()
     glob_fit_result = lmfit_nxT(x_data, binned_n_data, binned_u_n_data,
-                                add_to_fit=range(24), mu_guess=mu_guess, T_guess=T_guess)
+                                add_to_fit=subset, mu_guess=mu_guess, T_guess=T_guess)
     report_fit(glob_fit_result)
     glob_cov_matrix = np.array(glob_fit_result.covar)
     glob_fit_pars = np.array([glob_fit_result.params[key].value for key in glob_fit_result.params.keys()])
@@ -326,8 +330,8 @@ def global_fit():
     x_data = np.linspace(-np.size(eos_data[0,:])/2, 
                           np.size(eos_data[0,:])/2, 
                           np.size(eos_data[0,:]))
-    mus = glob_fit_pars[0:len(mu_guess)], 
-    Ts = glob_fit_pars[len(mu_guess):2*len(mu_guess)]
+    mus, u_mus = glob_fit_pars[0:len(subset)], glob_fit_pars_err[0:len(subset)]
+    Ts, u_Ts = glob_fit_pars[len(subset):2*len(subset)], glob_fit_pars_err[len(subset):2*len(subset)]
     glob_fit_density = compute_nxT(x_data, mus, Ts, *glob_fit_pars[-6::])
     _, _, glob_fit_potential = V_potential_model(x_data, *glob_fit_pars[-6::], break_LDA=True)
     with h5py.File(fit_outputs_h5) as fit_outputs:
@@ -335,8 +339,8 @@ def global_fit():
         h5_save(fit_outputs, 'global_fit_temp_set', Ts)
         h5_save(fit_outputs, 'global_fit_pot_set', glob_fit_pars[-6::])
         h5_save(fit_outputs, 'global_fit_redchi', glob_fit_result.redchi)
-        h5_save(fit_outputs, 'global_fit_u_mu0_set', glob_fit_pars_err[0:24])
-        h5_save(fit_outputs, 'global_fit_u_temp_set', glob_fit_pars_err[24:48])
+        h5_save(fit_outputs, 'global_fit_u_mu0_set', u_mus)
+        h5_save(fit_outputs, 'global_fit_u_temp_set', u_Ts)
         h5_save(fit_outputs, 'global_fit_u_pot_set', glob_fit_pars_err[-6::])
         h5_save(fit_outputs, 'global_fit_covariance_matrix', glob_cov_matrix)
         h5_save(fit_outputs, 'global_fit_density_output', glob_fit_density)
