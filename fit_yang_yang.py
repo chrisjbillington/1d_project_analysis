@@ -21,6 +21,7 @@ mass = 86.909180527*uma
 raw_data_h5 = 'raw_data.h5'
 processed_data_h5 = 'processed_data.h5'
 fit_outputs_h5 = 'fit_outputs.h5'
+sfit_outputs_h5 = 'fit_outputs_subset.h5'
 
 # Data load/save methods
 def h5_save(group, name, array):
@@ -205,13 +206,13 @@ def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
         add_mu_parameter(slice_index, fix=False)
     for slice_index in add_to_fit:
         add_T_parameter(slice_index, fix=False)   
-    params.add('Antitrap_height', value=16.13e3, min=12e3, max=22e3, vary=True)
-    params.add('Antitrap_center', value=-7.21, min=-20, max=20, vary=True)
-    params.add('Antitrap_width', value=2*185.2, min=300, max=450, vary=True)
-    params.add('Trap_depth', value=-25e3, min=-50e3, max=-1e3, vary=True)
-    params.add('Trap_center', value=-9.95, min=-20, max=20, vary=True)
-    params.add('Trap_width', value=139.92, min=90, max=250, vary=True)
-    # Residuals
+    params.add('Antitrap_height', value=17.64e3, min=12e3, max=22e3, vary=True)
+    params.add('Antitrap_center', value=4.7, min=-20, max=20, vary=True)
+    params.add('Antitrap_width', value=2*104.5, min=300, max=450, vary=True)
+    params.add('Trap_depth', value=-49.74e3, min=-50e3, max=-12e3, vary=True)
+    params.add('Trap_center', value=-4.9, min=-20, max=20, vary=True)
+    params.add('Trap_width', value=164.1, min=90, max=250, vary=True)
+    # True
     def residuals_nxT(pars, xdata, ydata, epsdata):
         mus ,Ts = [], []
         for slice_index in add_to_fit:
@@ -318,7 +319,7 @@ def global_fit():
     x_data = np.linspace(-np.size(eos_data[0,:])/2, 
                           np.size(eos_data[0,:])/2, 
                           np.size(binned_n_data[0,:]))
-    subset = list(range(10, 24))
+    subset = list(range(19, 24))
     mu_guess = np.linspace(1e3, 100, 24).tolist()
     T_guess = np.linspace(100e-9, 50e-9, 24).tolist()
     glob_fit_result = lmfit_nxT(x_data, binned_n_data, binned_u_n_data,
@@ -334,7 +335,7 @@ def global_fit():
     Ts, u_Ts = glob_fit_pars[len(subset):2*len(subset)], glob_fit_pars_err[len(subset):2*len(subset)]
     glob_fit_density = compute_nxT(x_data, mus, Ts, *glob_fit_pars[-6::])
     _, _, glob_fit_potential = V_potential_model(x_data, *glob_fit_pars[-6::], break_LDA=True)
-    with h5py.File(fit_outputs_h5) as fit_outputs:
+    with h5py.File(sfit_outputs_h5) as fit_outputs:
         h5_save(fit_outputs, 'global_fit_mu0_set', mus)
         h5_save(fit_outputs, 'global_fit_temp_set', Ts)
         h5_save(fit_outputs, 'global_fit_pot_set', glob_fit_pars[-6::])
