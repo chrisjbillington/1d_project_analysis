@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy import constants
 from tqdm import tqdm
-
+from numba import jit
 from lmfit import Parameters, minimize, report_fit, Minimizer
 from yang_yang_1dbg import bethe_integrator
 
@@ -97,8 +97,10 @@ def YY_thermodynamics(trans_freq, mass, temperature, chemical_potential,
         sys.stderr.write(msg)
 
 def V_potential_model(x, A_a, x0_a, dx_a, A_t, x0_t, dx_t, break_LDA=False):
+    @jit
     def anti_trap_model(x, A_a, x0_a, dx_a):
         return A_a/(1+((x-x0_a)**2/(dx_a/2)**2))
+    @jit
     def long_trap_model(x, A_t, x0_t, dx_t):
         return A_t*(np.exp(-(x-x0_t)**2/(2*dx_t**2)))
     V_a = anti_trap_model(x, A_a, x0_a, dx_a)
@@ -133,7 +135,7 @@ def compute_nx(x, mu0, T0, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
                                                  mass=mass, 
                                                  temperature=T0, 
                                                  chemical_potential=mui[j], 
-                                                 scatt_length=110*a0))
+                                                 scatt_length=100*a0))
     return np.array(density_profile)
 
 def lmfit_nx(xdata, ydata, dydata):
@@ -188,30 +190,30 @@ def compute_nxT(x, mus, Ts, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
                                                      mass=mass, 
                                                      temperature=glob_T, 
                                                      chemical_potential=mui, 
-                                                     scatt_length=110*a0)
+                                                     scatt_length=100*a0)
             mu_index += 1
     return n
 
 def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
     params = Parameters()
     if mu_guess is None:
-        mu_guess = 1e3*np.ones_like(add_to_fit)
+        mu_guess = 1e3*np.ones((24))
     if T_guess is None:
-        T_guess = 50e-9*np.ones_like(add_to_fit)
+        T_guess = 50e-9*np.ones((24))
     def add_mu_parameter(i, fix=False):
         params.add('mu'+str(i), value=mu_guess[i], min=-1e3, max=3e3, vary = not fix)
     def add_T_parameter(i, fix=False):
-        params.add('T'+str(i), value=T_guess[i], min=1e-10, max=1.5e-6, vary = not fix)
+        params.add('T'+str(i), value=T_guess[i], min=1e-9, max=2.5e-6, vary = not fix)
     for slice_index in add_to_fit:
         add_mu_parameter(slice_index, fix=False)
     for slice_index in add_to_fit:
         add_T_parameter(slice_index, fix=False)   
-    params.add('Antitrap_height', value=17.64e3, min=12e3, max=22e3, vary=True)
-    params.add('Antitrap_center', value=4.7, min=-20, max=20, vary=True)
-    params.add('Antitrap_width', value=2*104.5, min=300, max=450, vary=True)
-    params.add('Trap_depth', value=-49.74e3, min=-50e3, max=-12e3, vary=True)
-    params.add('Trap_center', value=-4.9, min=-20, max=20, vary=True)
-    params.add('Trap_width', value=164.1, min=90, max=250, vary=True)
+    params.add('Antitrap_height', value=17.64e3, min=14e3, max=24e3, vary=True)
+    params.add('Antitrap_center', value=-4.7, min=-30, max=20, vary=True)
+    params.add('Antitrap_width', value=2*133.2, min=200, max=450, vary=True)
+    params.add('Trap_depth', value=-25.74e3, min=-80e3, max=-14e3, vary=True)
+    params.add('Trap_center', value=-14.4, min=-30, max=30, vary=True)
+    params.add('Trap_width', value=164.12, min=90, max=200, vary=True)
     # True
     def residuals_nxT(pars, xdata, ydata, epsdata):
         mus ,Ts = [], []
@@ -249,7 +251,7 @@ def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
     u_data_subset = np.array([dydata[j, :] for j in add_to_fit])
     minimizer = Minimizer(residuals_nxT, params, fcn_args=(xdata, data_subset, u_data_subset), 
                           iter_cb=nxT_callback, nan_policy='omit')
-    return minimizer.minimize(method='leastsq')
+    return minimizer.minimize(method='leastsq', ftol=5e-4, xtol=5e-4, gtol=0.0)
 
     #####################################################################################
     #####                                                                           #####
@@ -315,15 +317,15 @@ def local_fit(slice_index=None):
 def global_fit():
     eos_data, u_eos_data, _, _ = load_data()
     binned_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in eos_data])
-    binned_u_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in u_eos_data])
+    binned_u_n_data = 1.25*np.array([bin_density_slice(nj, bin_size=4) for nj in u_eos_data])
     x_data = np.linspace(-np.size(eos_data[0,:])/2, 
                           np.size(eos_data[0,:])/2, 
                           np.size(binned_n_data[0,:]))
     subset = list(range(19, 24))
-    mu_guess = np.linspace(1e3, 100, 24).tolist()
-    T_guess = np.linspace(100e-9, 50e-9, 24).tolist()
+    mu_guess = np.linspace(2e3, 1e2, 24).tolist()
+    T_guess = np.linspace(200e-9, 20e-9, 24).tolist()
     glob_fit_result = lmfit_nxT(x_data, binned_n_data, binned_u_n_data,
-                                add_to_fit=subset, mu_guess=mu_guess, T_guess=T_guess)
+                                add_to_fit=subset, mu_guess=None, T_guess=None)
     report_fit(glob_fit_result)
     glob_cov_matrix = np.array(glob_fit_result.covar)
     glob_fit_pars = np.array([glob_fit_result.params[key].value for key in glob_fit_result.params.keys()])
