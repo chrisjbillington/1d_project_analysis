@@ -486,13 +486,13 @@ def compute_averages():
     """Average the (naive) ODs of each set of shots that are from the same
     point in parameter space (realisation) to produce a mean OD image for each
     point in the parameter space. Average is computed as:
-        -alpha * log (1 - <A>) + <S> * <A>
-    where <A> is the mean of the absorbed fractions and <S> is the mean of
-    the saturation parameter. The mean of the absorbed fractions is taken
-    before the log to avoid biasing the result toward higher ODs, since the
-    log of a Gaussian random variable has asymmetric uncertainties and cannot
-    be simply averaged together to obtain an unbiased estimate of the most
-    likely value.
+        -alpha * log (1 - <A>) + <S * A>
+    where <A> is the mean of the absorbed fractions and <S * A> is the mean of
+    the saturation parameter multiplied by the absorbed fraction. The mean of
+    the absorbed fractions is taken before the log to avoid biasing the result
+    toward higher ODs, since the log of a Gaussian random variable has
+    asymmetric uncertainties and cannot be simply averaged together to obtain
+    an unbiased estimate of the most likely value.
 
     Also and more importantly, compute the mean absorbed fraction for each
     realisation and mean saturation parameter"""
@@ -526,7 +526,8 @@ def compute_averages():
 
             mean_absorbed_fraction = absorbed_fraction[matching_shots, :, :].mean(axis=0)
             mean_saturation_parameter = saturation_parameter[matching_shots, :, :].mean(axis=0)
-            average_OD_i = -alpha * np.log(1 - mean_absorbed_fraction) + mean_saturation_parameter * mean_absorbed_fraction
+            mean_linear_term = (absorbed_fraction[matching_shots, :, :] * saturation_parameter[matching_shots, :, :]).mean(axis=0)
+            average_OD_i = -alpha * np.log(1 - mean_absorbed_fraction) + mean_linear_term
 
             average_OD[i] = average_OD_i
             average_absorbed_fraction[i] = mean_absorbed_fraction
