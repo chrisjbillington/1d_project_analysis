@@ -926,6 +926,30 @@ def make_uncertainty_map():
         # Save it:
         h5_save(processed_data, 'u_linear_density', u_linear_density)
 
+def systematic_density_background():
+    """ Use upper and lower regions from the reconstructed 
+    average OD to generate a  wavelet representative of systematic background
+    density fluctuations. This is then substracted from the linear density data"""
+
+    print('Substracting systematic density background')
+
+    with h5py.File(processed_data_h5) as processed_data:
+        reconstructed_naive_average_OD = processed_data['reconstructed_naive_average_OD'][:]
+        #reconstructed_naive_average_OD[10, :, 646] = 0.
+        mean_reconstructed_naive_average_OD = reconstructed_naive_average_OD.mean(0)
+        
+        # Get upper and lower background from naive average OD
+        included_pixels = 10 
+        upper_average_background_OD  = mean_reconstructed_naive_average_OD[0:included_pixels, :].mean(0)
+        lower_average_background_OD = mean_reconstructed_naive_average_OD[-included_pixels::, :].mean(0)
+        systematic_background_OD = 0.5*(upper_average_background_OD+lower_average_background_OD)
+
+        # Normalize the wavelet
+        normalized_sytematic_backgroun_OD = systematic_background_OD/np.sum(systematic_background_OD)
+
+        # Save it:
+        h5_save(processed_data, 'systematic_background_wavelet', normalized_sytematic_backgroun_OD)
+
 
 def plot_linear_density():
     """Plot the linear densities and compare to "naive" linear densities"""
@@ -975,22 +999,24 @@ def plot_linear_density():
 
 
 if __name__ == '__main__':
-    save_pca_images()
-    compute_mean_raw_images()
-    compute_dark_systematic_offset()
-    reconstruct_probe_frames()
-    plot_reconstructed_probe_frames()
-    reconstruct_dark_frames()
-    plot_reconstructed_dark_frames()
-    compute_OD_and_absorption_and_saturation_parameter()
-    plot_OD_and_absorption_and_saturation_parameter()
-    compute_averages()
-    reconstruct_absorbed_fraction()
-    plot_reconstructed_absorbed_fraction()
-    compute_max_absorption_saturation_parameter()
-    compute_reconstructed_naive_average_OD()
-    compute_naive_linear_density()
-    compute_linear_density()
-    make_uncertainty_map()
-    plot_linear_density()
+    # save_pca_images()
+    # compute_mean_raw_images()
+    # compute_dark_systematic_offset()
+    # reconstruct_probe_frames()
+    # plot_reconstructed_probe_frames()
+    # reconstruct_dark_frames()
+    # plot_reconstructed_dark_frames()
+    # compute_OD_and_absorption_and_saturation_parameter()
+    # plot_OD_and_absorption_and_saturation_parameter()
+    # compute_averages()
+    # reconstruct_absorbed_fraction()
+    # plot_reconstructed_absorbed_fraction()
+    # compute_max_absorption_saturation_parameter()
+    # compute_reconstructed_naive_average_OD()
+    # compute_naive_linear_density()
+    # compute_linear_density()
+    # make_uncertainty_map()
+    systematic_density_background()
+    # plot_linear_density()
+
     

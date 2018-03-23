@@ -79,6 +79,9 @@ def V_potential_model(x, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
 def bin_density_slice(density_slice, bin_size=2):
     return density_slice.reshape(-1, bin_size).mean(axis=1)
 
+def bin_uncertainty_slice(uncertainty_slice, bin_size=2):
+    return np.sqrt((uncertainty_slice**2).reshape(-1, bin_size).sum(axis=1))
+
 def YY_thermodynamics(trans_freq, mass, temperature, chemical_potential, 
                       scatt_length, returned=None):
     YYsolver = bethe_integrator(trans_freq, mass, temperature, 
@@ -244,18 +247,32 @@ def plot_density_data(save_plots=False):
     if save_plots:
         plt.savefig(os.path.join(outdir, 'all_density_data_and_fit.png'))
         plt.clf()
-            
+    
+    u_eos_data = load_data(processed_data_h5, 'u_linear_density')
+    binned_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in full_density_dataset])
+    binned_fit_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in fit_density_dataset])
+    binned_u_n_data = np.array([bin_uncertainty_slice(nj, bin_size=4) for nj in u_eos_data])
+    x_axis = np.linspace(-np.size(full_density_dataset[0,:])/2, 
+                          np.size(full_density_dataset[0,:])/2, 
+                          np.size(binned_n_data[0,:]))   
     __fig__= setup_figure()
     slice_index = -1
-    for n_1D, fit_n_1D in list(zip(full_density_dataset, fit_density_dataset)):
+    for n_1D, fit_n_1D in list(zip(binned_n_data, binned_fit_n_data)):
         slice_index += 1
-        _ax_ = plt.scatter(x_axis*pix_size/um, n_1D/(1/um), s=3.0, c='C0', alpha=0.75)
-        _ax_ = plt.plot(x_axis*pix_size/um, fit_n_1D/(1/um), 'k', linewidth=0.75)
-        plt.ylim([-5., 10.])
+        _ax_ = plt.subplot(111)
+        _ax_.plot(x_axis*pix_size/um, fit_n_1D/(1/um), 'r', linewidth=1.5)
+        _ax_.scatter(x_axis*pix_size/um, n_1D/(1/um), s=10.0, c='w', alpha=0.9,
+                           edgecolor='k')
+        _, _, axerrorlinecollection = _ax_.errorbar(x_axis*pix_size/um, n_1D/(1/um), 
+                                                    xerr=1.0, yerr=binned_u_n_data[slice_index]/(1/um),
+                                                    marker='', ls='', zorder=0)
+        axerrorlinecollection[0].set_color('k'), axerrorlinecollection[1].set_color('k')
+        plt.ylim([-5., 12.])
         label_current_ax(fig=__fig__, xlabel='$x \,[\mu m]$', ylabel='$n_{1D} \,[\mu m ^{-1}]$')
         plt.tight_layout()
         if save_plots:
-            plt.savefig(os.path.join(outdir, f'{slice_index:04d}_density_slice_and_fit.png'))
+            plt.savefig(os.path.join(outdir, f'{slice_index:04d}_density_slice_and_fit.png'),
+                dpi=500)
             plt.clf()
 
     #####################################################################################

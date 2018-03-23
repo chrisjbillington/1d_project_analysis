@@ -61,6 +61,9 @@ def load_data():
 def bin_density_slice(density_slice, bin_size=2):
     return density_slice.reshape(-1, bin_size).mean(axis=1)
 
+def bin_uncertainty_slice(uncertainty_slice, bin_size=2):
+    return np.sqrt((uncertainty_slice**2).reshape(-1, bin_size).sum(axis=1))
+
     #####################################################################################
     #####                                                                           #####
     #####                   ### ###  ###### #####   ###### ##                       #####
@@ -178,17 +181,20 @@ def lmfit_nx(xdata, ydata, dydata):
     #####                                                                           #####
     #####################################################################################
 
-def compute_nxT(x, mus, Ts, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
-    V_anti, _, V_total = V_potential_model(x, A_a, x0_a, dx_a, A_t, x0_t, dx_t, break_LDA=True)
-    f_perp = V_anti
+def compute_nxT(x, mus, Ts, ss, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
     n = np.zeros((len(mus), np.size(x)))
     for T_index in range(len(Ts)):
-        glob_mu, glob_T = mus[T_index], Ts[T_index]
+        if T_index < 19:
+            f_perp, _, V_total = V_potential_model(x-ss, A_a, x0_a, dx_a, A_t, 
+                                                   x0_t, dx_t, break_LDA=True)
+        else:
+            f_perp, _, V_total = V_potential_model(x, A_a, x0_a, dx_a, A_t, 
+                                                   x0_t, dx_t, break_LDA=True)
         mu_index = 0
-        for mui in tqdm(glob_mu - V_total):
+        for mui in tqdm(mus[T_index] - V_total):
             n[T_index, mu_index] = YY_thermodynamics(trans_freq=f_perp[mu_index], 
                                                      mass=mass, 
-                                                     temperature=glob_T, 
+                                                     temperature=Ts[T_index], 
                                                      chemical_potential=mui, 
                                                      scatt_length=100*a0)
             mu_index += 1
@@ -201,14 +207,15 @@ def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
     if T_guess is None:
         T_guess = 50e-9*np.ones((24))
     def add_mu_parameter(i, fix=False):
-        params.add('mu'+str(i), value=mu_guess[i], min=-1e3, max=3e3, vary = not fix)
+        params.add('mu'+str(i), value=mu_guess[i], min=-2e3, max=3e3, vary = not fix)
     def add_T_parameter(i, fix=False):
         params.add('T'+str(i), value=T_guess[i], min=1e-9, max=2.5e-6, vary = not fix)
     for slice_index in add_to_fit:
         add_mu_parameter(slice_index, fix=False)
     for slice_index in add_to_fit:
-        add_T_parameter(slice_index, fix=False)   
-    params.add('Antitrap_height', value=17.64e3, min=14e3, max=24e3, vary=True)
+        add_T_parameter(slice_index, fix=False)  
+    params.add('Shift_parameter', value=5.0, min=-10, max=10, vary=True)
+    params.add('Antitrap_height', value=17.64e3, min=14e3, max=24e3, vary=False)
     params.add('Antitrap_center', value=-4.7, min=-30, max=20, vary=True)
     params.add('Antitrap_width', value=2*133.2, min=200, max=450, vary=True)
     params.add('Trap_depth', value=-25.74e3, min=-80e3, max=-14e3, vary=True)
@@ -220,9 +227,10 @@ def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
         for slice_index in add_to_fit:
             mus.append(pars['mu'+str(slice_index)])
             Ts.append(pars['T'+str(slice_index)])
+        ss = pars['Shift_parameter']
         A_anti, x0_anti, dx_anti = pars['Antitrap_height'], pars['Antitrap_center'], pars['Antitrap_width']
         A_trap,  x0_trap, dx_trap = pars['Trap_depth'], pars['Trap_center'], pars['Trap_width']
-        model = compute_nxT(xdata, mus, Ts, A_anti, x0_anti, dx_anti, A_trap, x0_trap, dx_trap)
+        model = compute_nxT(xdata, mus, Ts, ss, A_anti, x0_anti, dx_anti, A_trap, x0_trap, dx_trap)
         return (ydata-model).flatten()/epsdata.flatten()
     # Callback function
     def nxT_callback(params, iteration, resid, *fcn_args, **fcn_kws):
@@ -317,11 +325,11 @@ def local_fit(slice_index=None):
 def global_fit():
     eos_data, u_eos_data, _, _ = load_data()
     binned_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in eos_data])
-    binned_u_n_data = 1.25*np.array([bin_density_slice(nj, bin_size=4) for nj in u_eos_data])
+    binned_u_n_data = np.array([bin_uncertainty_slice(nj, bin_size=4) for nj in u_eos_data])
     x_data = np.linspace(-np.size(eos_data[0,:])/2, 
                           np.size(eos_data[0,:])/2, 
                           np.size(binned_n_data[0,:]))
-    subset = list(range(19, 24))
+    subset = list(range(24))
     mu_guess = np.linspace(2e3, 1e2, 24).tolist()
     T_guess = np.linspace(200e-9, 20e-9, 24).tolist()
     glob_fit_result = lmfit_nxT(x_data, binned_n_data, binned_u_n_data,
@@ -335,15 +343,18 @@ def global_fit():
                           np.size(eos_data[0,:]))
     mus, u_mus = glob_fit_pars[0:len(subset)], glob_fit_pars_err[0:len(subset)]
     Ts, u_Ts = glob_fit_pars[len(subset):2*len(subset)], glob_fit_pars_err[len(subset):2*len(subset)]
-    glob_fit_density = compute_nxT(x_data, mus, Ts, *glob_fit_pars[-6::])
+    ss, u_ss = glob_fit_pars[2*len(subset)], glob_fit_pars_err[2*len(subset)]
+    glob_fit_density = compute_nxT(x_data, mus, Ts, ss, *glob_fit_pars[-6::])
     _, _, glob_fit_potential = V_potential_model(x_data, *glob_fit_pars[-6::], break_LDA=True)
-    with h5py.File(sfit_outputs_h5) as fit_outputs:
+    with h5py.File(fit_outputs_h5) as fit_outputs:
         h5_save(fit_outputs, 'global_fit_mu0_set', mus)
         h5_save(fit_outputs, 'global_fit_temp_set', Ts)
+        h5_save(fit_outputs, 'global_fit_shift_set', ss)
         h5_save(fit_outputs, 'global_fit_pot_set', glob_fit_pars[-6::])
         h5_save(fit_outputs, 'global_fit_redchi', glob_fit_result.redchi)
         h5_save(fit_outputs, 'global_fit_u_mu0_set', u_mus)
         h5_save(fit_outputs, 'global_fit_u_temp_set', u_Ts)
+        h5_save(fit_outputs, 'global_fit_u_shift_set', u_ss)
         h5_save(fit_outputs, 'global_fit_u_pot_set', glob_fit_pars_err[-6::])
         h5_save(fit_outputs, 'global_fit_covariance_matrix', glob_cov_matrix)
         h5_save(fit_outputs, 'global_fit_density_output', glob_fit_density)
