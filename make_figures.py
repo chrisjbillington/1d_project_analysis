@@ -63,8 +63,8 @@ def label_current_ax(fig, xlabel='', ylabel=''):
     #####                                                                           #####
     #####################################################################################
 
-def V_potential_model(x, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
-    
+def V_potential_model(x, x0_a, dx_a, A_t, x0_t, dx_t):
+    A_a = 17.64e3
     def anti_trap_model(x, A_a, x0_a, dx_a):
         return A_a/(1+((x-x0_a)**2/(dx_a/2)**2))
     
@@ -250,7 +250,7 @@ def plot_density_data(save_plots=False):
     
     u_eos_data = load_data(processed_data_h5, 'u_linear_density')
     binned_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in full_density_dataset])
-    binned_fit_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in fit_density_dataset])
+    binned_fit_n_data = fit_density_dataset#np.array([bin_density_slice(nj, bin_size=4) for nj in fit_density_dataset])
     binned_u_n_data = np.array([bin_uncertainty_slice(nj, bin_size=4) for nj in u_eos_data])
     x_axis = np.linspace(-np.size(full_density_dataset[0,:])/2, 
                           np.size(full_density_dataset[0,:])/2, 
@@ -317,7 +317,7 @@ def plot_figure_1_draft(save_plots=False):
         _, _, model_mean = function(x, *params)
         model_stddev = model_uncertainty(function, x, params, covariance)
         if yrange is None:
-            yrange = [(model_mean - 0.5*model_stddev).min(), (model_mean + 0.5*model_stddev).max()]
+            yrange = [(model_mean - 10*model_stddev).min(), (model_mean + 10*model_stddev).max()]
         y = np.linspace(yrange[0], yrange[1], resolution)
         Model_Mean, Y = np.meshgrid(model_mean, y)
         Model_Stddev, Y = np.meshgrid(model_stddev, y)
@@ -334,15 +334,22 @@ def plot_figure_1_draft(save_plots=False):
     average_linear_density = load_data(processed_data_h5, 'linear_density')[1]
     bin_avg_linear_density = bin_density_slice(average_linear_density, bin_size=4)
     fit_linear_density = load_data(fit_outputs_h5, 'global_fit_density_output')[1]
+    atom_number = np.trapz(fit_linear_density, dx=pix_size, axis=1)
+    systematic_wavelet = load_data(fit_outputs_h5, 'global_fit_systematic_density_wavelet')
+    systamatics_scale_parameter = load_data(fit_outputs_h5, 'global_fit_scale_set')
+    fit_linear_density_no_systematics = fit_linear_density - systamatics_scale_parameter*systematic_wavelet*np.sqrt(atom_number)
     #fit_linear_density[-1] *= 0 # temporary
     final_dipole_realization = 0.525 #load_data(raw_data_h5, 'final_dipole')[409]
     short_TOF_realization = 0.0 #load_data(raw_data_h5, 'short_TOF')[409]
-    potential_parameters = load_data(sfit_outputs_h5, 'global_fit_pot_set')
-    full_cov_matrix = load_data(sfit_outputs_h5, 'global_fit_covariance_matrix')
-    V_cov_matrix = full_cov_matrix[-6::, -6::]
-    #V_cov_matrix[0:4, 0:4] = full_cov_matrix[48:52, 48:52]
-    #V_cov_matrix[5, :] = full_cov_matrix[-1, -6::]
-    #V_cov_matrix[:, 5] = full_cov_matrix[-6::, -1]
+    potential_parameters = load_data(sfit_outputs_h5, 'global_fit_pot_set')[1::]
+    sfull_cov_matrix = load_data(sfit_outputs_h5, 'global_fit_covariance_matrix')
+    full_cov_matrix = load_data(fit_outputs_h5, 'global_fit_covariance_matrix')
+    V_cov_matrix = np.zeros((5, 5))
+    # V_cov_matrix[0 , :] = sfull_cov_matrix[10, 10::]
+    # V_cov_matrix[:, 0] = sfull_cov_matrix[10::, 10]
+    # V_cov_matrix[3, 0], V_cov_matrix[0, 3] = 0., 0. 
+    V_cov_matrix = full_cov_matrix[-5::, -5::]
+
     ODx_axis = np.linspace(-np.size(in_situ_single_shot_OD[0,:])/2, 
                             np.size(in_situ_single_shot_OD[0,:])/2, 
                             np.size(in_situ_single_shot_OD[0,:]))
@@ -371,7 +378,7 @@ def plot_figure_1_draft(save_plots=False):
     __fig__ = setup_figure()
     ax2 = plt.subplot(111)
     im2 = ax2.imshow(probability, origin='lower-left', aspect='auto',  extent=extent, 
-                     cmap='Blues', vmin=0.5, vmax=1.0)
+                     cmap='bone_r', vmin=0.0, vmax=1.0)
     #cbar2 = __fig__.colorbar(mappable=im2, ax=ax2, orientation='vertical')
     #cbar2.set_clim(-0., 1.0)
     ax2.plot(ODx_axis*pix_size/um, V_total, linewidth=1.0, color='k', label='Total')
@@ -380,7 +387,7 @@ def plot_figure_1_draft(save_plots=False):
     ax2.plot(ODx_axis*pix_size/um, longtrap, linewidth=2.0, linestyle='--',
              color='r', alpha=0.8, label='Long Trap')
     ax2.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.5, which='major')
-    plt.ylim([-1e3, 25e3])
+    plt.ylim([-1, 25e3])
     label_current_ax(fig=__fig__, xlabel='$z\,[\mu m]$', ylabel='$V\,[\,\mathrm{Hz}\,]$')
     #plt.title('(b)', loc='left')
     plt.legend()
@@ -414,7 +421,7 @@ def plot_figure_1_draft(save_plots=False):
     ax4.scatter(bin_x_axis*pix_size/um, bin_avg_linear_density/(1/um),
                 c='whitesmoke', s=25.0, edgecolor='k', linewidth=0.25, 
                 label='Average shot', alpha=0.75)
-    ax4.plot(ODx_axis*pix_size/um, fit_linear_density/(1/um), # **************
+    ax4.plot(bin_x_axis*pix_size/um, fit_linear_density/(1/um), # **************
              color='k', linewidth=2.5, linestyle='-', alpha=1.0, label='Fit')
     ax4.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
     plt.xlim([bin_x_axis[0]*pix_size/um, bin_x_axis[-1]*pix_size/um])
@@ -512,23 +519,23 @@ def plot_figure_3_draft(save_plots=False):
     density_A = load_data(processed_data_h5, 'linear_density')[A_ix]
     density_B = load_data(processed_data_h5, 'linear_density')[B_ix]
     potential_parameters = load_data(fit_outputs_h5, 'global_fit_pot_set')
-    x_axis = np.linspace(-np.size(density_A)/2, 
-                          np.size(density_A)/2, 
+    x_axis = np.linspace(-4*np.size(density_A)/2, 
+                          4*np.size(density_A)/2, 
                           np.size(density_A))
     _, _, potential = V_potential_model(x_axis, *potential_parameters)
-    fit_density_A = load_data(fit_outputs_h5, 'global_fit_density_output')[A_ix]
-    fit_density_B = load_data(fit_outputs_h5, 'global_fit_density_output')[B_ix]
     mu0_A = load_data(fit_outputs_h5, 'global_fit_mu0_set')[A_ix]
     mu0_B = load_data(fit_outputs_h5, 'global_fit_mu0_set')[B_ix]
     T_A = load_data(fit_outputs_h5, 'global_fit_temp_set')[A_ix]
     T_B = load_data(fit_outputs_h5, 'global_fit_temp_set')[B_ix]
+    fit_density_A = load_data(fit_outputs_h5, 'global_fit_density_output')[A_ix]
+    fit_density_B = load_data(fit_outputs_h5, 'global_fit_density_output')[B_ix]
     mu_A, mu_B = mu0_A-potential, mu0_B-potential
     g1D_A = compute_g1Dx(x_axis, mu0_A, T_A, *potential_parameters)
     g1D_B = compute_g1Dx(x_axis, mu0_B, T_B, *potential_parameters)
     tf_density_A, tf_density_B = hbar*2*pi*mu_A/g1D_A, hbar*2*pi*mu_B/g1D_B
     tf_density_A[tf_density_A<0], tf_density_B[tf_density_B<0] = 0, 0
-    entropy_A = compute_Sx(x_axis, mu_A, T_A, *potential_parameters)
-    entropy_B = compute_Sx(x_axis, mu_B, T_B, *potential_parameters)
+    #entropy_A = compute_Sx(x_axis, mu_A, T_A, *potential_parameters)
+    #entropy_B = compute_Sx(x_axis, mu_B, T_B, *potential_parameters)
     kth_A, kth_B = compute_kth(T_A), compute_kth(T_B)
     
     __fig__ = setup_figure()
@@ -539,9 +546,9 @@ def plot_figure_3_draft(save_plots=False):
             label=f'$T_A/T_d(0) =$ {(kB*T_A/(hbar**2*density_A.max()**2/(2*mass))):.2f}')
     ax1.scatter(hbar*2*pi*mu_B/mu_B_units, density_B/density_B_units, c='midnightblue', s=14.0, alpha=0.75, 
             label=f'$T_B/T_d(0) =$ {(kB*T_B/(hbar**2*density_B.max()**2/(2*mass))):.2f}')
-    ax1.step(hbar*2*pi*mu_A/mu_A_units, fit_density_A/(density_A_units), c='cornflowerblue', lw=1.5, 
+    ax1.plot(hbar*2*pi*mu_A/mu_A_units, fit_density_A/(density_A_units), c='cornflowerblue', lw=1.5, 
             label='Yang-Yang A')
-    ax1.step(hbar*2*pi*mu_B/mu_B_units, fit_density_B/(density_B_units), c='navy', lw=1.5, 
+    ax1.plot(hbar*2*pi*mu_B/mu_B_units, fit_density_B/(density_B_units), c='navy', lw=1.5, 
             label='Yang-Yang B')
     ax1.plot(hbar*2*pi*mu_A/mu_A_units, tf_density_A/(density_A_units), c='dimgray', lw=2.0, alpha=0.7,
             label='Mean Field A')
@@ -550,7 +557,7 @@ def plot_figure_3_draft(save_plots=False):
     #ax1.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
     #ax1.set_xscale('symlog')
     plt.ylim([-0.5, 4.0])
-    plt.xlim([-100., 5])
+    plt.xlim([-50., 5])
     label_current_ax(__fig__, xlabel='$\mu \, [2mg_{1D}^2/\hbar^2]$', ylabel='$n\,[\hbar^2/2mg_{1D}] $')
     plt.title('(a)',loc='left')
     plt.tight_layout()
@@ -730,7 +737,7 @@ def plot_figure_3_draft(save_plots=False):
     return None
 
 if __name__ == '__main__':
-    plot_density_data(save_plots=True)
-    #plot_figure_1_draft(save_plots=True)
+    #plot_density_data(save_plots=True)
+    plot_figure_1_draft(save_plots=True)
     #plot_figure_2_draft(save_plots=True)
     #plot_figure_3_draft(save_plots=True)

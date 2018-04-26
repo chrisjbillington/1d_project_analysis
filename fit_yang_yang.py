@@ -14,7 +14,7 @@ a0 = constants.codata.value('Bohr radius')
 uma = constants.codata.value('atomic mass constant')
 kB = constants.codata.value('Boltzmann constant')
 pi = np.pi  
-
+pix_size = 5.6e-6/6.66
 mass = 86.909180527*uma
 
 # Data
@@ -181,8 +181,8 @@ def lmfit_nx(xdata, ydata, dydata):
     #####                                                                           #####
     #####################################################################################
 
-def compute_nxT(x, mus, Ts, ss, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
-    n = np.zeros((len(mus), np.size(x)))
+def compute_nxT(x, mus, Ts, ss, rs, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
+    n, N_yy = np.zeros((len(mus), np.size(x))), np.zeros((len(mus)))
     for T_index in range(len(Ts)):
         if T_index < 19:
             f_perp, _, V_total = V_potential_model(x-ss, A_a, x0_a, dx_a, A_t, 
@@ -198,6 +198,8 @@ def compute_nxT(x, mus, Ts, ss, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
                                                      chemical_potential=mui, 
                                                      scatt_length=100*a0)
             mu_index += 1
+        N_yy[T_index] = np.trapz(n[T_index, :], dx=(x[1]-x[0])*pix_size)
+        n[T_index, :] = n[T_index, :] + rs*(N_yy[T_index]**(0.5))*binned_systematic_wavelet
     return n
 
 def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
@@ -215,6 +217,7 @@ def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
     for slice_index in add_to_fit:
         add_T_parameter(slice_index, fix=False)  
     params.add('Shift_parameter', value=5.0, min=-10, max=10, vary=True)
+    params.add('Scale_parameter', value=-0.01, vary=True)
     params.add('Antitrap_height', value=17.64e3, min=14e3, max=24e3, vary=False)
     params.add('Antitrap_center', value=-4.7, min=-30, max=20, vary=True)
     params.add('Antitrap_width', value=2*133.2, min=200, max=450, vary=True)
@@ -227,10 +230,11 @@ def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
         for slice_index in add_to_fit:
             mus.append(pars['mu'+str(slice_index)])
             Ts.append(pars['T'+str(slice_index)])
-        ss = pars['Shift_parameter']
+        ss, rs = pars['Shift_parameter'], pars['Scale_parameter']
         A_anti, x0_anti, dx_anti = pars['Antitrap_height'], pars['Antitrap_center'], pars['Antitrap_width']
         A_trap,  x0_trap, dx_trap = pars['Trap_depth'], pars['Trap_center'], pars['Trap_width']
-        model = compute_nxT(xdata, mus, Ts, ss, A_anti, x0_anti, dx_anti, A_trap, x0_trap, dx_trap)
+        model = compute_nxT(xdata, mus, Ts, ss, rs, A_anti, x0_anti, 
+                            dx_anti, A_trap, x0_trap, dx_trap)
         return (ydata-model).flatten()/epsdata.flatten()
     # Callback function
     def nxT_callback(params, iteration, resid, *fcn_args, **fcn_kws):
@@ -323,38 +327,62 @@ def local_fit(slice_index=None):
     #####################################################################################
 
 def global_fit():
+    with h5py.File(fit_outputs_h5) as fit_outputs:
+        no_systematics_density_fit_output = fit_outputs['global_fit_density_output_no_systematics'][:]
     eos_data, u_eos_data, _, _ = load_data()
+    x_axis = np.linspace(-np.size(eos_data[0,:])/2, 
+                          np.size(eos_data[0,:])/2, 
+                          np.size(eos_data[0,:]))
     binned_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in eos_data])
     binned_u_n_data = np.array([bin_uncertainty_slice(nj, bin_size=4) for nj in u_eos_data])
-    x_data = np.linspace(-np.size(eos_data[0,:])/2, 
-                          np.size(eos_data[0,:])/2, 
-                          np.size(binned_n_data[0,:]))
+    binned_x_axis = np.linspace(-np.size(eos_data[0,:])/2, 
+                                 np.size(eos_data[0,:])/2, 
+                                 np.size(binned_n_data[0,:]))
     subset = list(range(24))
     mu_guess = np.linspace(2e3, 1e2, 24).tolist()
     T_guess = np.linspace(200e-9, 20e-9, 24).tolist()
-    glob_fit_result = lmfit_nxT(x_data, binned_n_data, binned_u_n_data,
+
+    def generate_systematic_wavelet(load=False):
+        if load:
+            with h5py.File(fit_outputs_h5) as fit_outputs:
+                return fit_outputs['global_fit_systematic_density_wavelet'][:]
+        else:
+            systematic_residuals = eos_data - no_systematics_density_fit_output
+            atom_number_data = np.trapz(eos_data, dx=(x_axis[1]-x_axis[0])*pix_size, axis=1)
+            atom_number_weights = atom_number_data/atom_number_data.sum()
+            return np.average(systematic_residuals, axis=0, weights=atom_number_weights)
+    
+    systematic_wavelet = generate_systematic_wavelet(load=True)
+    global binned_systematic_wavelet  
+    binned_systematic_wavelet = bin_density_slice(systematic_wavelet, bin_size=4)
+
+    glob_fit_result = lmfit_nxT(binned_x_axis, binned_n_data, binned_u_n_data,
                                 add_to_fit=subset, mu_guess=None, T_guess=None)
     report_fit(glob_fit_result)
+
     glob_cov_matrix = np.array(glob_fit_result.covar)
     glob_fit_pars = np.array([glob_fit_result.params[key].value for key in glob_fit_result.params.keys()])
     glob_fit_pars_err = np.sqrt(np.diag(glob_cov_matrix))
-    x_data = np.linspace(-np.size(eos_data[0,:])/2, 
-                          np.size(eos_data[0,:])/2, 
-                          np.size(eos_data[0,:]))
+
     mus, u_mus = glob_fit_pars[0:len(subset)], glob_fit_pars_err[0:len(subset)]
     Ts, u_Ts = glob_fit_pars[len(subset):2*len(subset)], glob_fit_pars_err[len(subset):2*len(subset)]
     ss, u_ss = glob_fit_pars[2*len(subset)], glob_fit_pars_err[2*len(subset)]
-    glob_fit_density = compute_nxT(x_data, mus, Ts, ss, *glob_fit_pars[-6::])
-    _, _, glob_fit_potential = V_potential_model(x_data, *glob_fit_pars[-6::], break_LDA=True)
+    rs, u_rs = glob_fit_pars[2*len(subset)+1], glob_fit_pars_err[2*len(subset)+1]
+    glob_fit_density = compute_nxT(binned_x_axis, mus, Ts, ss, rs, *glob_fit_pars[-6::])
+
+    _, _, glob_fit_potential = V_potential_model(x_axis, *glob_fit_pars[-6::], break_LDA=True)
     with h5py.File(fit_outputs_h5) as fit_outputs:
+        h5_save(fit_outputs, 'global_fit_systematic_density_wavelet', systematic_wavelet)
         h5_save(fit_outputs, 'global_fit_mu0_set', mus)
         h5_save(fit_outputs, 'global_fit_temp_set', Ts)
         h5_save(fit_outputs, 'global_fit_shift_set', ss)
+        h5_save(fit_outputs, 'global_fit_scale_set', rs)
         h5_save(fit_outputs, 'global_fit_pot_set', glob_fit_pars[-6::])
         h5_save(fit_outputs, 'global_fit_redchi', glob_fit_result.redchi)
         h5_save(fit_outputs, 'global_fit_u_mu0_set', u_mus)
         h5_save(fit_outputs, 'global_fit_u_temp_set', u_Ts)
         h5_save(fit_outputs, 'global_fit_u_shift_set', u_ss)
+        h5_save(fit_outputs, 'global_fit_u_scale_set', u_rs)
         h5_save(fit_outputs, 'global_fit_u_pot_set', glob_fit_pars_err[-6::])
         h5_save(fit_outputs, 'global_fit_covariance_matrix', glob_cov_matrix)
         h5_save(fit_outputs, 'global_fit_density_output', glob_fit_density)
