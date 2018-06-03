@@ -163,3 +163,68 @@ class bethe_integrator(Homo_1DBG):
         P0 = np.sum(dk*np.log(1+np.exp(-eps)))
         n, _ = self.density()
         return T*P0/(2*pi*n)
+    
+def YY_thermodynamics(trans_freq, mass, temperature, chemical_potential, 
+                      scatt_length, returned=None):
+    YYsolver = bethe_integrator(trans_freq, mass, temperature, 
+                                chemical_potential, scatt_length)
+    n, g1D = YYsolver.density()
+    try:
+        if returned == 'epsilon':
+            return YYsolver.get_k_space(10, 2**10), YYsolver.eps_solver(eps_tol=1e-10)
+        elif returned == 'f_k':
+            return YYsolver.get_k_space(10, 2**10), YYsolver.f_solver(f_tol=1e-10)
+        elif returned == 'entropy':
+            return YYsolver.entropy_per_particle()
+        elif returned == 'pressure':
+            return YYsolver.pressure()
+        elif returned == 'g1D':
+            return g1D
+        else:
+            return n
+    except ValueError:
+        import sys
+        msg = ('Warning: returned argument is invalid, supported args are' +
+               '"epsilon" for the dispersion, "f_k" for quasimomentum spectrum' +
+               '"entropy" for entropy, "pressure" for pressure and None for density\n' )
+        sys.stderr.write(msg)
+
+
+
+# print(YY_thermodynamics(trans_freq=10e3, mass=1.44e-25, 
+#                       temperature=100e-9, 
+#                       chemical_potential=100, 
+#                       scatt_length=5e-9, returned='g1D'))
+
+#  # %%
+# d_map, S_map, i, j, N = [], [], -1, -1, 128
+# mug = np.linspace(-1000, 2500, N)
+# Tg = np.linspace(1e-9, 1e-6, N)
+# zrs = np.zeros(N)
+# muG, TG = np.meshgrid(mug, Tg)
+
+# for i in range(N):
+#     for j in range(N):
+#         d_map.append(YY_thermodynamics(trans_freq=10e3, mass=1.44e-25, 
+#                       temperature=TG[i, j], 
+#                       chemical_potential=muG[i, j], 
+#                       scatt_length=5e-9, returned=None))
+#         S_map.append(YY_thermodynamics(trans_freq=10e3, mass=1.44e-25, 
+#                       temperature=TG[i, j], 
+#                       chemical_potential=muG[i, j], 
+#                       scatt_length=5e-9, returned='entropy'))
+        
+# d_map, S_map = np.reshape(np.array(d_map), [N,N]), np.reshape(np.array(S_map), [N, N])
+
+#  #%% 
+# g1D = 6.95885845303e-38
+# gamma_map = 1.44e-25*g1D/(hbar**2*d_map)
+
+# deg_map = kB*TG / (hbar**2*d_map**2/(2*1.44e-25))
+
+#  #%%
+# import matplotlib.pyplot as plt
+# for delta_T in np.linspace(0.0, 3.0, 21):
+#     S_selection = S_map[(np.abs(deg_map-delta_T) < 0.01)].flatten()
+#     g_selection = gamma_map[(np.abs(deg_map-delta_T) < 0.01)].flatten()
+#     plt.plot(g_selection, S_selection, 'o', label=str(delta_T))

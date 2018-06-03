@@ -3,6 +3,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as colors
+import matplotlib.gridspec as grsp
 from scipy import constants
 from scipy.stats import norm
 from tqdm import tqdm
@@ -39,9 +40,9 @@ def load_data(dataset_h5, dataset_id):
     return pulled_data
 
 # Figure convenience functions
-def setup_figure(figsize=None):
+def setup_figure(figsize=None, dpi=None):
     # Call figure instance, set latex & fonts.
-    __fig__ = plt.figure(figsize=figsize)
+    __fig__ = plt.figure(figsize=figsize, dpi=dpi)
     font = {'family' : 'serif',
             'size'   : 14}
     plt.rc('text', usetex=True)
@@ -63,8 +64,8 @@ def label_current_ax(fig, xlabel='', ylabel=''):
     #####                                                                           #####
     #####################################################################################
 
-def V_potential_model(x, x0_a, dx_a, A_t, x0_t, dx_t):
-    A_a = 17.64e3
+def V_potential_model(x, A_a, x0_a, dx_a, A_t, x0_t, dx_t):
+    #A_a = 17.64e3
     def anti_trap_model(x, A_a, x0_a, dx_a):
         return A_a/(1+((x-x0_a)**2/(dx_a/2)**2))
     
@@ -116,18 +117,19 @@ def YY_thermodynamics(trans_freq, mass, temperature, chemical_potential,
     #####           #####    ######   ##  ## ######  ######   ##      ##            #####
     #####                                                                           #####
     #####################################################################################
-def compute_nx(x, mu0, T0, A_a, x0_a, dx_a, A_t, x0_t, dx_t):  
-    _, _, V_long = V_potential_model(x, A_a, x0_a, dx_a, A_t, x0_t, dx_t)
-    f_perp = A_a/(1+((x-x0_a)**2/(dx_a/2)**2))
-    mui = mu0 - V_long
+def compute_nx(x, mu0, T0, ss, rs, A_a, x0_a, dx_a, A_t, x0_t, dx_t):  
+    V_anti, _, V_total = V_potential_model(x, A_a, x0_a, dx_a, A_t, x0_t, dx_t)
+    f_perp = V_anti
+    mui = mu0 - V_total
     density_profile = []
-    for j in tqdm(range(np.size(V_long))):
+    for j in tqdm(range(np.size(V_total))):
         density_profile.append(YY_thermodynamics(trans_freq=f_perp[j], 
                                      mass=mass, 
                                      temperature=T0, 
                                      chemical_potential=mui[j], 
-                                     scatt_length=110*a0))
+                                     scatt_length=100*a0))
     return np.array(density_profile)
+
     #####################################################################################
     #####                                                                           #####
     #####           ######   ##  ## ######   ######  ###### ######  ##  ##          #####
@@ -213,9 +215,17 @@ def plot_density_data(save_plots=False):
     full_density_dataset = load_data(processed_data_h5, 'linear_density')
     full_density_dataset[10, 646] = 0.
     fit_density_dataset = load_data(fit_outputs_h5, 'global_fit_density_output')
+    systematic_density_wavelet = load_data(fit_outputs_h5, 'global_fit_systematic_density_wavelet')
+    binned_syst_density_wave = bin_density_slice(systematic_density_wavelet, bin_size=4)
     x_axis = np.linspace(-np.size(full_density_dataset[0,:])/2, 
                           np.size(full_density_dataset[0,:])/2, 
                           np.size(full_density_dataset[0,:]))
+    fit_density_numbers = [np.trapz(full_density_dataset[j, :], dx=(x_axis[1]-x_axis[0])*pix_size) 
+                           for j in range(24)]
+    systamatics_scale_par = load_data(fit_outputs_h5, 'global_fit_scale_set')
+    weighted_systematics = np.array([(Nyy**0.5)*systamatics_scale_par*binned_syst_density_wave 
+                                     for Nyy in fit_density_numbers])
+    fit_density_dataset_only_YY = fit_density_dataset - weighted_systematics
     realization = np.linspace(0, np.size(full_density_dataset[:,0]), 
                                  np.size(full_density_dataset[:,0]))
     # Output folder
@@ -232,7 +242,7 @@ def plot_density_data(save_plots=False):
     label_current_ax(fig=__fig__, ylabel='Realization')
 
     ax2 = plt.subplot(212)
-    im2 = ax2.imshow(fit_density_dataset/(1/um), cmap='seismic', aspect='auto',
+    im2 = ax2.imshow(fit_density_dataset_only_YY/(1/um), cmap='seismic', aspect='auto',
                 vmin=-10.0, vmax=10., origin='lower',
                 extent=((x_axis*pix_size/um).min(), (x_axis*pix_size/um).max(),
                 realization.min(), realization.max()))
@@ -250,7 +260,7 @@ def plot_density_data(save_plots=False):
     
     u_eos_data = load_data(processed_data_h5, 'u_linear_density')
     binned_n_data = np.array([bin_density_slice(nj, bin_size=4) for nj in full_density_dataset])
-    binned_fit_n_data = fit_density_dataset#np.array([bin_density_slice(nj, bin_size=4) for nj in fit_density_dataset])
+    binned_fit_n_data = fit_density_dataset_only_YY#np.array([bin_density_slice(nj, bin_size=4) for nj in fit_density_dataset])
     binned_u_n_data = np.array([bin_uncertainty_slice(nj, bin_size=4) for nj in u_eos_data])
     x_axis = np.linspace(-np.size(full_density_dataset[0,:])/2, 
                           np.size(full_density_dataset[0,:])/2, 
@@ -328,20 +338,16 @@ def plot_figure_1_draft(save_plots=False):
         return probability, [x.min(), x.max(), y.min(), y.max()]
 
     schematic_setup_image = plt.imread('Fig1_Schematic.jpg')
-    in_situ_single_shot_OD = load_data(processed_data_h5, 'naive_OD')[409, 180:255, :]
-    integrated_single_shot_density = in_situ_single_shot_OD.sum(0)*pix_size/sigma_0
+    in_situ_single_shot_OD = load_data(processed_data_h5, 'naive_OD')[313, 180:255, :] #409
+    integrated_single_shot_density = in_situ_single_shot_OD[31:39].sum(0)*pix_size/sigma_0
     bin_single_shot_density = bin_density_slice(integrated_single_shot_density, bin_size=4)
-    average_linear_density = load_data(processed_data_h5, 'linear_density')[1]
+    average_linear_density = load_data(processed_data_h5, 'linear_density')[2]
     bin_avg_linear_density = bin_density_slice(average_linear_density, bin_size=4)
-    fit_linear_density = load_data(fit_outputs_h5, 'global_fit_density_output')[1]
-    atom_number = np.trapz(fit_linear_density, dx=pix_size, axis=1)
-    systematic_wavelet = load_data(fit_outputs_h5, 'global_fit_systematic_density_wavelet')
-    systamatics_scale_parameter = load_data(fit_outputs_h5, 'global_fit_scale_set')
-    fit_linear_density_no_systematics = fit_linear_density - systamatics_scale_parameter*systematic_wavelet*np.sqrt(atom_number)
+    fit_linear_density = load_data(fit_outputs_h5, 'global_fit_density_output')
     #fit_linear_density[-1] *= 0 # temporary
-    final_dipole_realization = 0.525 #load_data(raw_data_h5, 'final_dipole')[409]
+    final_dipole_realization = 0.545 #load_data(raw_data_h5, 'final_dipole')[409] #0.525
     short_TOF_realization = 0.0 #load_data(raw_data_h5, 'short_TOF')[409]
-    potential_parameters = load_data(sfit_outputs_h5, 'global_fit_pot_set')[1::]
+    potential_parameters = load_data(fit_outputs_h5, 'global_fit_pot_set')[1::]
     sfull_cov_matrix = load_data(sfit_outputs_h5, 'global_fit_covariance_matrix')
     full_cov_matrix = load_data(fit_outputs_h5, 'global_fit_covariance_matrix')
     V_cov_matrix = np.zeros((5, 5))
@@ -352,89 +358,178 @@ def plot_figure_1_draft(save_plots=False):
 
     ODx_axis = np.linspace(-np.size(in_situ_single_shot_OD[0,:])/2, 
                             np.size(in_situ_single_shot_OD[0,:])/2, 
-                            np.size(in_situ_single_shot_OD[0,:]))
+                            np.size(in_situ_single_shot_OD[0,:])) + potential_parameters[3] + 35
     ODy_axis = np.linspace(-np.size(in_situ_single_shot_OD[:,0])/2, 
                             np.size(in_situ_single_shot_OD[:,0])/2, 
                             np.size(in_situ_single_shot_OD[:,0]))
     bin_x_axis = np.linspace(-np.size(integrated_single_shot_density)/2, 
                               np.size(integrated_single_shot_density)/2, 
-                              np.size(bin_single_shot_density))
+                              np.size(bin_single_shot_density)) + potential_parameters[3] + 35
+    atom_number = np.trapz(fit_linear_density, dx=(bin_x_axis[1]-bin_x_axis[0])*pix_size, axis=1)
+    systematic_wavelet = load_data(fit_outputs_h5, 'global_fit_systematic_density_wavelet')
+    binned_systematic_density_wave = bin_density_slice(systematic_wavelet, bin_size=4)
+    systamatics_scale_par = load_data(fit_outputs_h5, 'global_fit_scale_set')
+    systematic_density_correction = np.array([(N**0.5)*binned_systematic_density_wave*systamatics_scale_par 
+                                              for N in atom_number])
+    from scipy import stats
+    print(stats.kstest(systematic_density_correction.flatten(), 'norm'))
+    # import IPython
+    # IPython.embed()
+    # assert False, "BREAK"
+    fit_linear_density_no_systematics = fit_linear_density[2] - systematic_density_correction[2]
     antitrap, longtrap, V_total = V_potential_model(ODx_axis*pix_size/um, *potential_parameters)
     probability, extent = model_shaded_uncertainty(V_potential_model, ODx_axis*pix_size/um, 
                                                     potential_parameters, V_cov_matrix)
+    def build_fig_1_a():
+        __fig__ = setup_figure()
+        ax1 = plt.subplot(111)
+        im1 = ax1.imshow(schematic_setup_image, aspect='equal')
+        ax1.axis('off')
+        plt.tight_layout()
+        plt.subplots_adjust(hspace=0.1)
 
-    __fig__ = setup_figure()
-    ax1 = plt.subplot(111)
-    im1 = ax1.imshow(schematic_setup_image, aspect='equal')
-    ax1.axis('off')
-    plt.title('(a)', loc='left')
-    plt.tight_layout()
-    plt.subplots_adjust(hspace=0.1)
+        if save_plots:
+            plt.savefig(f'Fig_1a.pdf', dpi=1000)
+            plt.clf()
 
-    if save_plots:
-        plt.savefig(f'Fig_1a.pdf', dpi=1000)
-        plt.clf()
+    def build_fig_1_b():
+        in_nK = lambda EinHz: EinHz*hbar*2*pi/(kB*1e-9)
 
-    __fig__ = setup_figure()
-    ax2 = plt.subplot(111)
-    im2 = ax2.imshow(probability, origin='lower-left', aspect='auto',  extent=extent, 
-                     cmap='bone_r', vmin=0.0, vmax=1.0)
-    #cbar2 = __fig__.colorbar(mappable=im2, ax=ax2, orientation='vertical')
-    #cbar2.set_clim(-0., 1.0)
-    ax2.plot(ODx_axis*pix_size/um, V_total, linewidth=1.0, color='k', label='Total')
-    ax2.plot(ODx_axis*pix_size/um, antitrap, linewidth=2.0, linestyle='--',
-             color='C2', alpha=0.8, label='Anti-trap')
-    ax2.plot(ODx_axis*pix_size/um, longtrap, linewidth=2.0, linestyle='--',
-             color='r', alpha=0.8, label='Long Trap')
-    ax2.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.5, which='major')
-    plt.ylim([-1, 25e3])
-    label_current_ax(fig=__fig__, xlabel='$z\,[\mu m]$', ylabel='$V\,[\,\mathrm{Hz}\,]$')
-    #plt.title('(b)', loc='left')
-    plt.legend()
-    plt.tight_layout()
-    plt.subplots_adjust(hspace=0.1)
+        __fig__ = setup_figure()
+        ax2 = plt.subplot(111)
+        im2 = ax2.imshow(probability, origin='lower-left', aspect='auto',  extent=[extent[0], extent[1],
+                         in_nK(extent[2])/1e3, in_nK(extent[3])/1e3], cmap='bone_r', vmin=0.0, vmax=1.0)
+        #cbar2 = __fig__.colorbar(mappable=im2, ax=ax2, orientation='vertical')
+        #cbar2.set_clim(-0., 1.0)
+        ax2.plot(ODx_axis*pix_size/um, in_nK(V_total)/1e3, linewidth=1.0, color='k', label='Total')
+        ax2.plot(ODx_axis*pix_size/um, in_nK(antitrap)/1e3, linewidth=2.0, linestyle='-',
+                 color='C2', alpha=0.8, label='Anti-trap')
+        ax2.plot(ODx_axis*pix_size/um, in_nK(longtrap)/1e3, linewidth=2.0, linestyle='-',
+                 color='r', alpha=0.8, label='Long Trap')
+        ax2.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.5, which='major')
+        plt.ylim([0.0, 1.25])
+        label_current_ax(fig=__fig__, xlabel='$z\,(\mu m)$', ylabel='$V\,(\mu K)$')
+        plt.tight_layout()
+        plt.subplots_adjust(hspace=0.1)
 
-    if save_plots:
-        plt.savefig(f'Fig_1b.pdf')
-        plt.clf()
+        if save_plots:
+            plt.savefig(f'Fig_1b.pdf')
+            plt.clf()
 
-    __fig__ = setup_figure()
-    ax3 = plt.subplot(111)
-    im3 = ax3.imshow(in_situ_single_shot_OD, cmap='Blues', aspect='equal',
-                vmin=-0.2, vmax=1.2, origin='lower',
-                extent=((ODx_axis*pix_size/um).min(), (ODx_axis*pix_size/um).max(),
-                        (ODy_axis*pix_size/um).min(), (ODy_axis*pix_size/um).max()))
-    label_current_ax(fig=__fig__, xlabel='$z\,[\mu m]$', ylabel='$y\,[\mu m]$')
-    plt.title('(b)', loc='left')
-    plt.tight_layout()
-    plt.subplots_adjust(hspace=0.1)
+    def build_fig_1_a_c_d():
+        __fig__ = setup_figure(figsize=[5, 7], dpi=1000)
+        gs = grsp.GridSpec(3, 1, height_ratios=[2, 1, 4])
+        
+        ax1 = plt.subplot(gs[0])
+        im1 = ax1.imshow(schematic_setup_image, aspect='equal')
+        ax1.axis('off')
+        ax1.text(x=0, y=0, s='(a)')
 
-    if save_plots:
-        plt.savefig(f'Fig_1c.pdf')
-        plt.clf()
+        ax3 = plt.subplot(gs[1])
+        im3 = ax3.imshow(in_situ_single_shot_OD, cmap='Greens', aspect='equal',
+                    vmin=-0.2, vmax=1.2, origin='lower',
+                    extent=((ODx_axis*pix_size/um).min(), (ODx_axis*pix_size/um).max(),
+                            (ODy_axis*pix_size/um).min(), (ODy_axis*pix_size/um).max()))
+        label_current_ax(fig=__fig__, ylabel='$y\,(\mathrm{\mu m})$')
+        ax3.text(x=(ODx_axis*pix_size/um).min(), y=8, s='(b)')
+        
+        ax4 = plt.subplot(gs[2], sharex=ax3)
+        ax4.scatter(bin_x_axis*pix_size/um, bin_single_shot_density/(1/um),
+                    c='white', s=15.0, linewidth=0.35, alpha=1.0, edgecolor='k', 
+                    label='Raw shot')
+        ax4.scatter(bin_x_axis*pix_size/um, bin_avg_linear_density/(1/um),
+                    c='forestgreen', s=15.0, edgecolor='k', linewidth=0.35, 
+                    label='Processed average shot', alpha=1.0)
+        ax4.scatter(bin_x_axis*pix_size/um, systematic_density_correction[1]/(1/um),
+                    c='gray', s=5.0, alpha=1.0, edgecolor='k', linewidth=0.4,
+                    label='Residuals', marker=',')
+        ax4.plot(bin_x_axis*pix_size/um, fit_linear_density_no_systematics/(1/um), # **************
+                 color='k', linewidth=2.5, linestyle='-', alpha=1.0, label='YY Fit')
+        ax4.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
+        plt.xlim([bin_x_axis[0]*pix_size/um, bin_x_axis[-1]*pix_size/um])
+        plt.ylim([-3., 12.])
+        label_current_ax(fig=__fig__, xlabel='$z\,(\mathrm{\mu m})$', ylabel='$n \,(\mathrm{\mu m}^{-1})$')
+        ax4.text(x=bin_x_axis[0]*pix_size/um, y=11.2, s='(c)')
+        
+        plt.subplots_adjust(left=0.4, bottom=0.01, right=None, top=None,
+                            wspace=0.3, hspace=0.01)
+        plt.setp(ax3.get_xticklabels(), visible=False)
+        ax3.set_adjustable('box-forced')
+        ax1.set_adjustable('box-forced')
+        plt.tight_layout()
 
-    __fig__ = setup_figure()
-    ax4 = plt.subplot(111)
-    ax4.scatter(bin_x_axis*pix_size/um, bin_single_shot_density/(1/um),
-                c='midnightblue', s=25.0, linewidth=0.25, alpha=0.75, edgecolor='k', 
-                label='Single shot')
-    ax4.scatter(bin_x_axis*pix_size/um, bin_avg_linear_density/(1/um),
-                c='whitesmoke', s=25.0, edgecolor='k', linewidth=0.25, 
-                label='Average shot', alpha=0.75)
-    ax4.plot(bin_x_axis*pix_size/um, fit_linear_density/(1/um), # **************
-             color='k', linewidth=2.5, linestyle='-', alpha=1.0, label='Fit')
-    ax4.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
-    plt.xlim([bin_x_axis[0]*pix_size/um, bin_x_axis[-1]*pix_size/um])
-    plt.ylim([-5., 15.])
-    label_current_ax(fig=__fig__, xlabel='$z\,[\mu m]$', ylabel='$n \,[\mu m ^{-1}]$')
-    plt.title('(c)', loc='left')
-    plt.legend()
-    plt.tight_layout()
-    plt.subplots_adjust(hspace=0.1)
+        if save_plots:
+            plt.savefig(f'Fig_1acd.pdf')
+            plt.clf()
 
-    if save_plots:
-        plt.savefig(f'Fig_1d.pdf')
-        plt.clf()
+    def build_fig_1_d():
+        __fig__ = setup_figure()
+        ax4 = plt.subplot(111)
+        ax4.scatter(bin_x_axis*pix_size/um, bin_single_shot_density/(1/um),
+                    c='midnightblue', s=25.0, linewidth=0.25, alpha=0.85, edgecolor='k', 
+                    label='Raw shot')
+        ax4.scatter(bin_x_axis*pix_size/um, bin_avg_linear_density/(1/um),
+                    c='dodgerblue', s=35.0, edgecolor='k', linewidth=0.25, 
+                    label='Processed average shot', alpha=0.85)
+        ax4.scatter(bin_x_axis*pix_size/um, systematic_density_correction[1]/(1/um),
+                    c='grey', s=15.0, edgecolor='k',  linewidth=0.25, alpha=1.0, label='Residuals')
+        ax4.plot(bin_x_axis*pix_size/um, fit_linear_density_no_systematics/(1/um), # **************
+                 color='k', linewidth=2.5, linestyle='-', alpha=1.0, label='YY Fit')
+        ax4.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
+        plt.xlim([bin_x_axis[0]*pix_size/um, bin_x_axis[-1]*pix_size/um])
+        plt.ylim([-3., 17.])
+        label_current_ax(fig=__fig__, xlabel='$z\,[\mu m]$', ylabel='$n \,[\mu m ^{-1}]$')
+        plt.title('(c)', loc='left')
+        plt.legend()
+        plt.tight_layout()
+        plt.subplots_adjust(hspace=0.1)
+
+        if save_plots:
+            plt.savefig(f'Fig_1d.pdf')
+            plt.clf()
+
+    def build_fig_1_e():
+        gamma = np.linspace(1e-3, 1e2, 2**12)
+        t = np.linspace(1e-3, 1e4, 2**12)
+
+        border_1 = np.sqrt(gamma[gamma<=1e0])
+        border_2 = gamma[gamma>=1e0]**2
+
+        __fig__ = setup_figure()
+        ax = plt.subplot(111)
+        ax.plot((gamma[gamma<1e0]), (border_1), 'k',
+                 (gamma[gamma>1e0]), (border_2), 'k',
+                  np.ones(t.shape), t, 'k', gamma, np.ones(gamma.shape), 'k')
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.fill_between(gamma[gamma<1e0], 1e-3, border_1, where=border_1>1e-3, 
+                        facecolor='blue', alpha=0.5, label='Quasi-condensate')
+        ax.fill_between(gamma[gamma>1e0], 1e-3, border_2, where=border_2>1e-3,
+                        facecolor='red', alpha =0.5, label='Strong Coupling')
+        ax.fill_between(gamma[gamma>1e0], border_2, 1e4, where=border_2<1e4, 
+                        facecolor='green', alpha=0.5, label='Weak Coupling')
+        ax.fill_between(gamma[gamma<1e0], border_1, 1e4, where=border_1<1e4, 
+                        facecolor='green', alpha=0.5, label='Weak Coupling')
+        label_current_ax(fig=__fig__, xlabel='$\gamma$', ylabel='$T/T_d$')
+        plt.xlim([1e-3, 1e2])
+        plt.ylim([1e-3, 1e4])
+
+        #ax.text(4e-3, 2e2, 'Weak Coupling', style='normal',
+        #        bbox={'facecolor':'yellow', 'alpha':1.0, 'pad':10})
+        #ax.text(0.35e1, 2e-1, 'Strong Coupling', style='normal',
+        #        bbox={'facecolor':'yellow', 'alpha':1.0, 'pad':10})
+        #ax.text(1e-2, 1e-2, 'Quasi-Condensate', style='normal',
+        #        bbox={'facecolor':'yellow', 'alpha':1.0, 'pad':10})
+        plt.tight_layout()
+        plt.subplots_adjust(hspace=0.1)
+
+        if save_plots:
+            plt.savefig(f'Fig_1e.pdf')
+            plt.clf()
+
+    #build_fig_1_b()
+    build_fig_1_a_c_d()
+    #build_fig_1_e()
 
     #####################################################################################
     #####                                                                           #####
@@ -484,21 +579,58 @@ def plot_figure_2_draft(save_plots=False):
     time = np.concatenate((t_segment_0, t_segment_1, t_segment_2, t_segment_3))
     green_ramp, long_ramp, cross_ramp = array_ize(green_ramp), array_ize(long_ramp), array_ize(cross_ramp)
 
+    AO_command = np.array([-0.5, -0.45, -0.40, -0.35, -0.30, -0.25, -0.535, -0.525, -0.510, -0.200, 
+                    -0.150, -0.100, -0.050, -0.000, 0.050, -0.540, -0.550, -0.560, 0.500, -0.57, -0.58, -0.59, -0.6])
+    AO_command += 0.5
+    calibrated_P = np.array([9*mW, 26*mW, 50*mW, 82*mW, 122*mW, 167*mW, 3*mW, 4*mW, 7*mW, 217*mW, 275*mW, 332*mW,
+                            396*mW, 461*mW, 524*mW, 2*mW, 1*mW, 0.4*mW, 1*W, 0.05*mW, 0.04*mW, 0.36*mW, 1.07*mW])
+
+    def lmfit_AOMresponse(xdata, ydata, u_ydata):
+        pars = Parameters()
+        pars.add('Norm', value=1.0, vary=True)
+
+        def residuals(pars, xdata, ydata, u_ydata):
+            pm = pars['Norm']
+            ymodel = sine_squared(xdata, pm)
+            return (ydata-ymodel)/u_ydata
+
+        return minimize(residuals, pars, args=(xdata, ydata, u_ydata),
+                          method='leastsq', nan_policy='omit')
+
+    def sine_squared(p_in, p_max):
+        return (np.sin((np.pi/2)*np.sqrt(p_in/p_max)))**2
+
+    result = lmfit_AOMresponse(AO_command, calibrated_P, 0.01*calibrated_P)
+    report_fit(result)
+    parameters = np.array([result.params[key].value for key in result.params.keys()])
+
+    voltages = np.linspace(-0.0, 1.0, 2**8)
+    powers = sine_squared(voltages, *parameters)
+    plt.scatter(AO_command, calibrated_P, c='k')
+    plt.plot(voltages, powers)
+
+    import IPython
+    IPython.embed()
+
     __fig__ = setup_figure()
     ax1 = plt.subplot(111)
-    ax1.plot(time, green_ramp, c='limegreen', lw=3.0, label='Blue-detuned')
-    ax1.plot(time, long_ramp, c='maroon', lw=3.0, label='Red-detuned')
-    ax1.plot(time, cross_ramp, c='cornflowerblue',lw=3.0, label='BEC-cross dipole trap')
-    ax1.axvline(250., c='k', ls='--', lw=1.5, alpha=0.5)
-    ax1.axvline(500., c='k', ls='--', lw=1.5, alpha=0.5)
-    ax1.axvline(750., c='k', ls='--', lw=1.5, alpha=0.5)
+    ax1.plot(time, green_ramp, c='limegreen', ls='-', lw=3.0, label='Blue-detuned')
+    ax1.plot(time, long_ramp, c='maroon', ls='--', lw=3.0, label='Red-detuned')
+    ax1.plot(time, cross_ramp, c='cornflowerblue', ls='-.',lw=3.0, label='BEC-cross dipole trap')
+    ax1.axvline(250*ms, c='k', ls='--', lw=1.0, alpha=0.5)
+    ax1.axvline(500*ms, c='k', ls='--', lw=1.0, alpha=0.5)
+    ax1.axvline(750*ms, c='k', ls='--', lw=1.0, alpha=0.5)
+    ax1.text(100*ms, 0.8, s='(i)')
+    ax1.text(350*ms, 0.8, s='(ii)')
+    ax1.text(600*ms, 0.8, s='(iii)')
+    ax1.text(825*ms, 0.8, s='(iv)')
     #ax1.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
-    plt.ylim([-0.1, 1.0])
-    plt.xlim([-0., 1.0])
-    label_current_ax(__fig__, xlabel='$t \,[s]$', ylabel='Power [W]')
+    plt.ylim([0, 1.0])
+    plt.xlim([0., 1.0])
+    label_current_ax(__fig__, xlabel='$t \,(s)$', ylabel='Intensity (a .u.)')
     #plt.title('Loading ramps', loc='left')
     plt.tight_layout()
-    plt.legend()
+    #plt.legend()
 
     if save_plots:
         plt.savefig(f'Fig_2.pdf')
@@ -516,60 +648,95 @@ def plot_figure_2_draft(save_plots=False):
 
 def plot_figure_3_draft(save_plots=False):
     A_ix, B_ix = 0, 17
-    density_A = load_data(processed_data_h5, 'linear_density')[A_ix]
-    density_B = load_data(processed_data_h5, 'linear_density')[B_ix]
+    density_A = bin_density_slice(load_data(processed_data_h5, 'linear_density')[A_ix], bin_size=4)
+    density_B = bin_density_slice(load_data(processed_data_h5, 'linear_density')[B_ix], bin_size=4)
+    u_density_A = bin_uncertainty_slice(load_data(processed_data_h5, 'u_linear_density')[A_ix], bin_size=4)
+    u_density_B = bin_uncertainty_slice(load_data(processed_data_h5, 'u_linear_density')[B_ix], bin_size=4)
     potential_parameters = load_data(fit_outputs_h5, 'global_fit_pot_set')
     x_axis = np.linspace(-4*np.size(density_A)/2, 
                           4*np.size(density_A)/2, 
                           np.size(density_A))
-    _, _, potential = V_potential_model(x_axis, *potential_parameters)
+    potential = bin_density_slice(load_data(fit_outputs_h5, 'global_fit_pot_output'), bin_size=4)
+    systematic_density_wavelet = load_data(fit_outputs_h5, 'global_fit_systematic_density_wavelet')
+    binned_syst_density_wave = bin_density_slice(systematic_density_wavelet, bin_size=4)
+    density_numbers = [np.trapz(d, dx=(x_axis[1]-x_axis[0])*pix_size) for d in [density_A, density_B]] 
+    systamatics_scale_par = load_data(fit_outputs_h5, 'global_fit_scale_set')
+    weighted_systematics = np.array([(Nyy**0.5)*systamatics_scale_par*binned_syst_density_wave 
+                                     for Nyy in density_numbers])
     mu0_A = load_data(fit_outputs_h5, 'global_fit_mu0_set')[A_ix]
     mu0_B = load_data(fit_outputs_h5, 'global_fit_mu0_set')[B_ix]
+    u_mu0_A = load_data(fit_outputs_h5, 'global_fit_u_mu0_set')[A_ix]
+    u_mu0_B = load_data(fit_outputs_h5, 'global_fit_u_mu0_set')[B_ix]
     T_A = load_data(fit_outputs_h5, 'global_fit_temp_set')[A_ix]
     T_B = load_data(fit_outputs_h5, 'global_fit_temp_set')[B_ix]
-    fit_density_A = load_data(fit_outputs_h5, 'global_fit_density_output')[A_ix]
-    fit_density_B = load_data(fit_outputs_h5, 'global_fit_density_output')[B_ix]
+    fit_density_A = load_data(fit_outputs_h5, 'global_fit_density_output')[A_ix] - weighted_systematics[0]
+    fit_density_B = load_data(fit_outputs_h5, 'global_fit_density_output')[B_ix] - weighted_systematics[1]
+    density_A = density_A - weighted_systematics[0]
+    density_B = density_B - weighted_systematics[1]
     mu_A, mu_B = mu0_A-potential, mu0_B-potential
     g1D_A = compute_g1Dx(x_axis, mu0_A, T_A, *potential_parameters)
     g1D_B = compute_g1Dx(x_axis, mu0_B, T_B, *potential_parameters)
     tf_density_A, tf_density_B = hbar*2*pi*mu_A/g1D_A, hbar*2*pi*mu_B/g1D_B
     tf_density_A[tf_density_A<0], tf_density_B[tf_density_B<0] = 0, 0
-    #entropy_A = compute_Sx(x_axis, mu_A, T_A, *potential_parameters)
-    #entropy_B = compute_Sx(x_axis, mu_B, T_B, *potential_parameters)
-    kth_A, kth_B = compute_kth(T_A), compute_kth(T_B)
+    # entropy_A = compute_Sx(x_axis, mu0_A, T_A, *potential_parameters)
+    # entropy_B = compute_Sx(x_axis, mu0_B, T_B, *potential_parameters)
+    # kth_A, kth_B = compute_kth(T_A), compute_kth(T_B)
+    # import IPython
+    # IPython.embed()
     
-    __fig__ = setup_figure()
-    ax1 = plt.subplot(111)
-    density_A_units, density_B_units = 1/(hbar**2/(2*mass*g1D_A)), 1/(hbar**2/(2*mass*g1D_B))
-    mu_A_units, mu_B_units = 2*mass*g1D_A**2/hbar**2, 2*mass*g1D_B**2/hbar**2
-    ax1.scatter(hbar*2*pi*mu_A/mu_A_units, density_A/density_A_units, c='lightskyblue', s=14.0, alpha=0.75, 
-            label=f'$T_A/T_d(0) =$ {(kB*T_A/(hbar**2*density_A.max()**2/(2*mass))):.2f}')
-    ax1.scatter(hbar*2*pi*mu_B/mu_B_units, density_B/density_B_units, c='midnightblue', s=14.0, alpha=0.75, 
-            label=f'$T_B/T_d(0) =$ {(kB*T_B/(hbar**2*density_B.max()**2/(2*mass))):.2f}')
-    ax1.plot(hbar*2*pi*mu_A/mu_A_units, fit_density_A/(density_A_units), c='cornflowerblue', lw=1.5, 
-            label='Yang-Yang A')
-    ax1.plot(hbar*2*pi*mu_B/mu_B_units, fit_density_B/(density_B_units), c='navy', lw=1.5, 
-            label='Yang-Yang B')
-    ax1.plot(hbar*2*pi*mu_A/mu_A_units, tf_density_A/(density_A_units), c='dimgray', lw=2.0, alpha=0.7,
-            label='Mean Field A')
-    ax1.plot(hbar*2*pi*mu_B/mu_B_units, tf_density_B/(density_B_units), c='k', lw=2.0, alpha=0.7, 
-            label='Mean Field B')
-    #ax1.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
-    #ax1.set_xscale('symlog')
-    plt.ylim([-0.5, 4.0])
-    plt.xlim([-50., 5])
-    label_current_ax(__fig__, xlabel='$\mu \, [2mg_{1D}^2/\hbar^2]$', ylabel='$n\,[\hbar^2/2mg_{1D}] $')
-    plt.title('(a)',loc='left')
-    plt.tight_layout()
-    plt.legend()
+    def build_fig_3_a():
+        __fig__ = setup_figure()
+        ax1 = plt.subplot(111)
+        density_A_units, density_B_units = 1/(hbar**2/(2*mass*g1D_A)), 1/(hbar**2/(2*mass*g1D_B))
+        mu_A_units, mu_B_units = 2*mass*g1D_A**2/hbar**2, 2*mass*g1D_B**2/hbar**2
 
-    if save_plots:
-        plt.savefig(f'Fig_3a.pdf')
-        plt.clf()
+        ax1_x, ax1_y = hbar*2*pi*mu_A/mu_A_units, density_A/density_A_units
+        ax1_u_x, ax1_u_y = hbar*2*pi*u_mu0_A/mu_A_units, u_density_A/density_A_units
+        sc1 = ax1.scatter(ax1_x, ax1_y, c='lightskyblue', s=14.0, alpha=1.0)
+        _, _, sc1_errorcollection = ax1.errorbar(ax1_x, ax1_y, xerr=ax1_u_x, yerr=ax1_u_y, 
+                                                    marker='', ls='', zorder=0)
+        sc1_errorcollection[0].set_color('k')
+        sc1_errorcollection[1].set_color('k')
+        ax1.annotate(('$T_A/T_d^{(0)} =\,$'+f'{(kB*T_A/(hbar**2*density_A.max()**2/(2*mass))):.2f}'),
+                    xy=(3.0, 2.7), xytext=(-25, 2.5), arrowprops=dict(facecolor='black', shrink=0.05,
+                        width=0.5, headwidth=2))
+        
+        ax1_x, ax1_y = hbar*2*pi*mu_B/mu_B_units, density_B/density_B_units
+        ax1_u_x, ax1_u_y = hbar*2*pi*u_mu0_B/mu_B_units, u_density_B/density_B_units
+        sc2 = ax1.scatter(ax1_x, ax1_y, c='midnightblue', s=14.0, alpha=1.0)
+        _, _, sc2_errorcollection = ax1.errorbar(ax1_x, ax1_y, xerr=ax1_u_x, yerr=ax1_u_y,
+                                                    marker='', ls='', zorder=0)
+        sc2_errorcollection[0].set_color('k')
+        sc2_errorcollection[1].set_color('k')
+        ax1.annotate(('$T_B/T_d^{(0)} =\,$'+f'{(kB*T_B/(hbar**2*density_B.max()**2/(2*mass))):.2f}'),
+                    xy=(0.1, 0.8), xytext=(-30, 1.5), arrowprops=dict(facecolor='black', shrink=0.05,
+                        width=0.5, headwidth=2))
+
+        ax1.plot(hbar*2*pi*mu_A/mu_A_units, fit_density_A/(density_A_units), c='cornflowerblue', lw=1.5, 
+                label='Yang-Yang A')
+        ax1.plot(hbar*2*pi*mu_B/mu_B_units, fit_density_B/(density_B_units), c='navy', lw=1.5, 
+                label='Yang-Yang B')
+        ax1.plot(hbar*2*pi*mu_A/mu_A_units, tf_density_A/(density_A_units), c='k', lw=2.0, alpha=0.7,
+                label='Mean Field A')
+        #ax1.plot(hbar*2*pi*mu_B/mu_B_units, tf_density_B/(density_B_units), c='k', lw=2.0, alpha=0.7, 
+                #label='Mean Field B')
+        #ax1.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
+        #ax1.set_xscale('symlog')
+        plt.ylim([-0.5, 3.0])
+        plt.xlim([-50., 5])
+        label_current_ax(__fig__, xlabel='$\hbar^2\,\mu/2 m g_{1 \mathrm{D} }^2$', 
+                                  ylabel='$\gamma^{-1}$')
+        plt.title('(a)',loc='left')
+        plt.tight_layout()
+        #plt.legend()
+
+        if save_plots:
+            plt.savefig(f'Fig_3a.pdf')
+            plt.clf()
 
     # Temperature calibration
     def temperature(final_dipole):
-        return 519.916*nK*final_dipole - 247.7625*nK
+        return 2*(519.916*nK*final_dipole - 247.7625*nK)
 
     full_density_dataset = load_data(processed_data_h5, 'linear_density')
     full_density_dataset[10, 646] = 0.
@@ -581,71 +748,80 @@ def plot_figure_3_draft(save_plots=False):
     temp_realization = temperature(load_data(processed_data_h5, 'realisation_final_dipole'))
     time_realization = load_data(processed_data_h5, 'realisation_short_TOF')
 
-    __fig__ = setup_figure(figsize=(8, 6))
-    ax1 = plt.subplot(221)
-    ax2 = plt.subplot(222, sharey = ax1)
-    ax3 = plt.subplot(223, sharex = ax1)
-    ax4 = plt.subplot(224, sharex = ax2, sharey = ax3)
+    def build_fig_3_b():
+        __fig__ = setup_figure()
+        
+        ax1 = plt.subplot(221)
+        ax2 = plt.subplot(222, sharey = ax1)
+        ax3 = plt.subplot(223, sharex = ax1)
+        ax4 = plt.subplot(224, sharex = ax2, sharey = ax3)
 
-    ax1_x, ax1_y = temp_realization[0:19], mu0_set[0:19]
-    ax1_u_x, ax1_u_y = 4*nK, u_mu0_set[0:19]
-    ax1_shading = (temp_realization[0:19]/nK)/peak_degeneracy_temps[0:19]
-    sc1 = ax1.scatter(ax1_x/nK, ax1_y, c=ax1_shading, cmap='Blues', edgecolor='k')
-    _, _ ,ax1errorlinecollection = ax1.errorbar(ax1_x/nK, ax1_y, xerr=ax1_u_x/nK, yerr=ax1_u_y, 
-                                                marker='', ls='', zorder=0)
-    ax1errorlinecollection[0].set_color('k')
-    ax1errorlinecollection[1].set_color('k')
-    ax1.set_ylabel('$\mu_0 \, [\mathrm{Hz}]$', fontsize=14)
-    #ax1.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.5, which='major')
+        ax1_x, ax1_y = temp_realization[0:19], mu0_set[0:19]/1e3
+        ax1_u_x, ax1_u_y = 4*nK, u_mu0_set[0:19]/1e3
+        ax1_shading = (temp_set[0:19]/nK)/peak_degeneracy_temps[0:19]
+        sc1 = ax1.scatter(ax1_x/nK, ax1_y, c=ax1_shading, cmap='Blues', edgecolor='k')
+        _, _ ,ax1errorlinecollection = ax1.errorbar(ax1_x/nK, ax1_y, xerr=ax1_u_x/nK, yerr=ax1_u_y, 
+                                                    marker='', ls='', zorder=0)
+        ax1errorlinecollection[0].set_color('k')
+        ax1errorlinecollection[1].set_color('k')
+        ax1.set_ylabel('$\mu_0 \, (\mathrm{kHz})$', fontsize=14)
+        ax1.set_ylim(0.0, 2.0)
+        ax1.set_xlim(0.0, 400.0)
 
-    ax2_x = np.array([time_realization[0], *time_realization[19::].tolist()])
-    ax2_y = np.array([mu0_set[0], *mu0_set[19::].tolist()])
-    ax2_u_x, ax2_u_y = 0.001*ms, np.array([u_mu0_set[0], *u_mu0_set[19::].tolist()])
-    ax2_peak_degeneracy_temps = np.array([peak_degeneracy_temps[0], *peak_degeneracy_temps[19::].tolist()])
-    ax2_temps = np.array([temp_set[0], *temp_set[19::].tolist()])
-    ax2_shading = (ax2_temps/nK)/ax2_peak_degeneracy_temps
-    ax2.scatter(ax2_x, ax2_y, c=ax2_shading, cmap='Blues', edgecolor='k')
-    _, _, ax2errorlinecollection = ax2.errorbar(ax2_x, ax2_y, xerr=ax2_u_x, yerr=ax2_u_y,
-                                                marker='', ls='', zorder=0)
-    ax2errorlinecollection[0].set_color('k'), ax2errorlinecollection[1].set_color('k')
-    #ax2.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.5, which='major')
 
-    ax3_x, ax3_y = ax1_x, temp_set[0:19]
-    ax3_u_x, ax3_u_y = ax1_u_x, u_temp_set[0:19]
-    ax3_shading = ax1_shading
-    ax3.scatter(ax3_x/nK, ax3_y/nK, c=ax3_shading, cmap='Blues', edgecolor='k')
-    _, _, ax3errorlinecollection = ax3.errorbar(ax3_x/nK, ax3_y/nK, xerr=ax3_u_x/nK, yerr=ax3_u_y/nK,
-                                                marker='', ls='', zorder=0)
-    ax3errorlinecollection[0].set_color('k'), ax3errorlinecollection[1].set_color('k')
-    ax3.set_xlabel('$\mathrm{T_{3D}}\, [\mathrm{nK}]$', fontsize=14)
-    ax3.set_ylabel('$\mathrm{T_{YY}}\, [\mathrm{nK}]$', fontsize=14)
-    #ax3.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.5, which='major')
+        ax2_x = np.array([time_realization[0], *time_realization[19::].tolist()])
+        ax2_y = np.array([mu0_set[0], *mu0_set[19::].tolist()])/1e3
+        ax2_u_x, ax2_u_y = 0.001*ms, np.array([u_mu0_set[0], *u_mu0_set[19::].tolist()])/1e3
+        ax2_peak_degeneracy_temps = np.array([peak_degeneracy_temps[0], *peak_degeneracy_temps[19::].tolist()])
+        ax2_temps = np.array([temp_set[0], *temp_set[19::].tolist()])
+        ax2_shading = (ax2_temps/nK)/ax2_peak_degeneracy_temps
+        ax2.scatter(ax2_x, ax2_y, c=ax2_shading, cmap='Blues', edgecolor='k')
+        _, _, ax2errorlinecollection = ax2.errorbar(ax2_x, ax2_y, xerr=ax2_u_x, yerr=ax2_u_y,
+                                                    marker='', ls='', zorder=0)
+        ax2errorlinecollection[0].set_color('k'), ax2errorlinecollection[1].set_color('k')
+        ax2.set_ylim(0.0, 2.0)
+        ax2.set_xlim(-0.1, 5.1)
 
-    ax4_x, ax4_y = ax2_x, np.array([temp_set[0], *temp_set[19::].tolist()])
-    ax4_u_x, ax4_u_y = ax2_u_x, np.array([u_temp_set[0], *u_temp_set[19::].tolist()])
-    ax4_shading = ax2_shading
-    ax4.scatter(ax4_x, ax4_y/nK, c=ax4_shading, cmap='Blues', edgecolor='k')
-    _, _, ax4errorlinecollection = ax4.errorbar(ax4_x, ax4_y/nK, xerr=ax4_u_x, yerr=ax4_u_y/nK,
-                                                marker='', ls='', zorder=0)
-    ax4errorlinecollection[0].set_color('k'), ax4errorlinecollection[1].set_color('k')
-    ax4.set_xlabel('$t [s]$', fontsize=14)
-    #ax4.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.5, which='major')
+        ax3_x, ax3_y = ax1_x, temp_set[0:19]
+        ax3_u_x, ax3_u_y = ax1_u_x, u_temp_set[0:19]
+        ax3_shading = ax1_shading
+        ax3.scatter(ax3_x/nK, ax3_shading, c=ax3_y/nK, cmap='Blues', edgecolor='k')
+        #_, _, ax3errorlinecollection = ax3.errorbar(ax3_x/nK, ax3_y/nK, xerr=ax3_u_x/nK, yerr=ax3_u_y/nK,
+        #                                            marker='', ls='', zorder=0)
+        #ax3errorlinecollection[0].set_color('k'), ax3errorlinecollection[1].set_color('k')
+        ax3.set_xlabel('$T_{\mathrm{3D}}\, (\mathrm{nK})$', fontsize=14)
+        ax3.set_ylabel('$T/T_d^{(0)}$', fontsize=14)
+        ax3.set_ylim(0.0, 5.0)
+        ax3.set_xlim(0.0, 400.0)
 
-    plt.setp(ax1.get_xticklabels(), visible=False)
-    plt.setp(ax2.get_yticklabels(), visible=False)
-    plt.setp(ax2.get_xticklabels(), visible=False)
-    plt.setp(ax4.get_yticklabels(), visible=False)
-    ax1.set_title('(b)', loc='left')
-    plt.tight_layout()
 
-    all_axes = np.array([ax1, ax2, ax3, ax4])
-    cbar = __fig__.colorbar(mappable=sc1, ax=all_axes.ravel().tolist(), orientation='vertical')
-    cbar.set_label('$T_{YY}/T_d^{(0)}$')
-    cbar.set_clim(0., ax1_shading.max())
+        ax4_x, ax4_y = ax2_x, np.array([temp_set[0], *temp_set[19::].tolist()])
+        ax4_u_x, ax4_u_y = ax2_u_x, np.array([u_temp_set[0], *u_temp_set[19::].tolist()])
+        ax4_shading = ax2_shading
+        ax4.scatter(ax4_x, ax4_shading, c=ax4_y/nK, cmap='Blues', edgecolor='k')
+        #_, _, ax4errorlinecollection = ax4.errorbar(ax4_x, ax4_y/nK, xerr=ax4_u_x, yerr=ax4_u_y/nK,
+        #                                            marker='', ls='', zorder=0)
+        #ax4errorlinecollection[0].set_color('k'), ax4errorlinecollection[1].set_color('k')
+        ax4.set_xlabel('$t (s)$', fontsize=14)
+        ax4.set_ylim(0.0, 5.0)
+        ax4.set_xlim(-0.1, 5.1)
+
+        plt.setp(ax1.get_xticklabels(), visible=False)
+        plt.setp(ax2.get_yticklabels(), visible=False)
+        plt.setp(ax2.get_xticklabels(), visible=False)
+        plt.setp(ax4.get_yticklabels(), visible=False)
+        ax1.set_title('(b)', loc='left')
+        plt.tight_layout()
+
+        all_axes = np.array([ax1, ax2, ax3, ax4])
+        cbar = plt.colorbar(mappable=sc1, ax=all_axes.ravel().tolist(), orientation='vertical',
+                            fraction=0.05, pad=0.05, shrink=0.8)
+        cbar.set_label('$T/T_d^{(0)}$')
+        cbar.set_clim(0., ax1_shading.max())
     
-    if save_plots:
-        plt.savefig(f'Fig_3b.pdf')
-        plt.clf()
+        if save_plots:
+            plt.savefig(f'Fig_3b.pdf')
+            plt.clf()
 
     # __fig__ = setup_figure()
     # ax2 = plt.subplot(111)
@@ -666,25 +842,30 @@ def plot_figure_3_draft(save_plots=False):
     number_decay = load_data(three_body_h5, 'OneThree_Body_Decay')
     fit_number_decay = load_data(three_body_h5, 'Fit_OneThree_Body_Decay')
     time = np.linspace(0.0, 5.0, np.size(number_decay))
-    __fig__ = setup_figure()
-    ax3 = plt.subplot(111)
-    ax3.scatter(time, number_decay, c='lightskyblue', s=15.0, alpha=0.75, 
-                label='Number YY-Interpolation')
-    ax3.scatter([0, 1, 2, 3, 4, 5], number, c='r', edgecolor='k', s=30.0, alpha=0.85, 
-                label='Number data', marker='D')
-    ax3.plot(time, fit_number_decay, lw=2.0, c='midnightblue', label='Decay model')
-    #ax3.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
-    plt.ylim([-0., 1500.])
-    plt.xlim([-0.2, 5.2])
-    label_current_ax(__fig__, xlabel='$t \, [s]$', ylabel='$N$')
-    plt.title('(c)', loc='left')
-    plt.tight_layout()
-    plt.legend()
+    
+    def build_fig_3_c():
+        __fig__ = setup_figure()
+        ax3 = plt.subplot(111)
+        ax3.scatter(time, number_decay, c='lightskyblue', s=15.0, alpha=0.75, 
+                    label='Number YY-Interpolation')
+        ax3.scatter([0, 1, 2, 3, 4, 5], number, c='r', edgecolor='k', s=30.0, alpha=0.85, 
+                    label='Number data', marker='D')
+        ax3.plot(time, fit_number_decay, lw=2.0, c='midnightblue', label='Decay model')
+        #ax3.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
+        plt.ylim([-0., 1500.])
+        plt.xlim([-0.2, 5.2])
+        label_current_ax(__fig__, xlabel='$t \, [s]$', ylabel='$N$')
+        plt.title('(c)', loc='left')
+        plt.tight_layout()
+        plt.legend()
 
-    if save_plots:
-        plt.savefig(f'Fig_3c.pdf')
-        plt.clf()
+        if save_plots:
+            plt.savefig(f'Fig_3c.pdf')
+            plt.clf()
 
+    #build_fig_3_a()
+    build_fig_3_b()
+    #build_fig_3_c()
 
 #def _V(save_plots=False):
     
@@ -738,6 +919,6 @@ def plot_figure_3_draft(save_plots=False):
 
 if __name__ == '__main__':
     #plot_density_data(save_plots=True)
-    plot_figure_1_draft(save_plots=True)
+    #plot_figure_1_draft(save_plots=True)
     #plot_figure_2_draft(save_plots=True)
-    #plot_figure_3_draft(save_plots=True)
+    plot_figure_3_draft(save_plots=True)
