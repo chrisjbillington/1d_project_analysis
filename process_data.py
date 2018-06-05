@@ -2,6 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import h5py
+from scipy.ndimage.filters import uniform_filter
 from tqdm import tqdm
 from image_reconstruction.cpu_reconstructor import CPUReconstructor
 
@@ -49,6 +50,7 @@ gamma_D2 = 1/26.2348e-9
 m_Rb = 1.443160648e-25
 sigma_0 = 3*lambda_Rb**2 / (2*pi)
 v_recoil = 2*pi*hbar/(m_Rb * lambda_Rb)
+
 
 def gaussian_blur(image, px):
     """gaussian blur an image by given number of pixels"""
@@ -122,9 +124,6 @@ def save_pca_images():
 
     # Do this for each set of raw images:
     with h5py.File(raw_data_h5, 'r') as raw_data:
-        # These are very RAM consuming and for some reason memory is not freed
-        # after each one. You might need to run them one at a time in order to
-        # not run out of memory:
         _save_pca_images(raw_data['probe'], 'probe')
         _save_pca_images(raw_data['dark'], 'dark')
         _save_pca_images(raw_data['atoms'], 'atoms', ROI_mask)
@@ -551,14 +550,15 @@ def reconstruct_absorbed_fraction():
     this is to reduce the noise present in each slice so that we can sum over
     more pixels vertically before noise dominates the result. Integrate the result
     over y pixels in the ROI to get the y integrated absorbed fraction
-    for each realisation. Do this two ways:
-    1. Reconstruct the unaveraged images, then average
-    2. Reconstruct the already-averaged images
+    for each realisation. Do this for both
+    1. The unaveraged absorbed fractions.
+    2. The averaged absorbed fractions.
 
-    In both cases the reconstruction basis is based on the averaged images.
-    Doing it both ways lets us compare which is better. Edit: It turns out
-    they're the same, but still computing the pre-averaged images allow us to
-    compute a standard deviation for uncertainty estimation."""
+    Averaging then reconstructing returns numerically identical results to
+    reconstructing then averaging, so we compute reconstructed average absorbed
+    fractions directly from the average absorbed fractions - but we also
+    reconstruct pre-averaged images so we can consider the results of single shots
+    too, including using their statistical variation for uncertainty estimation."""
 
     def get_reference_slices(slice_x_index):
 
@@ -619,6 +619,7 @@ def reconstruct_absorbed_fraction():
         reconstructed_absorbed_fraction_ROI = np.zeros(absorbed_fraction_ROI.shape)
         reconstructed_average_absorbed_fraction_ROI = np.zeros(average_absorbed_fraction_ROI.shape)
         integrated_reconstructed_average_absorbed_fraction = np.zeros((n_realisations, average_absorbed_fraction_ROI.shape[2]))
+        integrated_reconstructed_absorbed_fraction = np.zeros((n_shots, average_absorbed_fraction_ROI.shape[2]))
 
         for x_index in tqdm(range(absorbed_fraction_ROI.shape[2]), desc='  Reconstructing slices'):
             reference_slices = get_reference_slices(x_index)
@@ -641,11 +642,29 @@ def reconstruct_absorbed_fraction():
                 reconstructed_slice, rchi2 = reconstructor.reconstruct(target_slice,
                                                  n_principal_components=n_principal_components)
                 reconstructed_absorbed_fraction_ROI[i, :, x_index] = reconstructed_slice
+                integrated_reconstructed_absorbed_fraction[i, x_index] = reconstructed_slice.sum(axis=0) * dy_pixel
+
+        # Infer uncertainty in integrated_reconstructed_average_absorbed_fraction
+        # from standard error of the mean for
+        # integrated_reconstructed_absorbed_fraction:
+
+        with h5py.File(raw_data_h5, 'r') as raw_data:
+            final_dipole = raw_data['final_dipole'][:]
+            short_TOF = raw_data['short_TOF'][:]
+
+        u_integrated_reconstructed_average_absorbed_fraction = np.zeros(integrated_reconstructed_average_absorbed_fraction.shape)
+        for i, (tof_val, dipole_val) in tqdm(enumerate(realisations), total=n_realisations, desc='  computing standard deviations'):
+            matching_shots = (final_dipole == dipole_val) & (short_TOF == tof_val)
+            u_integrated_reconstructed_average_absorbed_fraction[i] = integrated_reconstructed_absorbed_fraction[matching_shots, :].std(axis=0) / np.sqrt(matching_shots.sum())
+            # 10px smoothing on the uncertainty in integrated absorbed fraction:
+            u_integrated_reconstructed_average_absorbed_fraction[i] = uniform_filter(u_integrated_reconstructed_average_absorbed_fraction[i], size=10)
 
         # Save everything
         h5_save(processed_data, 'reconstructed_absorbed_fraction_ROI', reconstructed_absorbed_fraction_ROI)
         h5_save(processed_data, 'reconstructed_average_absorbed_fraction_ROI', reconstructed_average_absorbed_fraction_ROI)
         h5_save(processed_data, 'integrated_reconstructed_average_absorbed_fraction', integrated_reconstructed_average_absorbed_fraction)
+        h5_save(processed_data, 'integrated_reconstructed_absorbed_fraction', integrated_reconstructed_average_absorbed_fraction)
+        h5_save(processed_data, 'u_integrated_reconstructed_average_absorbed_fraction', u_integrated_reconstructed_average_absorbed_fraction)
 
         # plot them:
         outdir_OD = os.path.join(PROCESS_DATA_OUTDIR, 'reconstructed_average_absorbed_fraction')
@@ -821,7 +840,7 @@ def compute_linear_density():
     def sigma2_y_of_t(t, S):
         """Return the modelled mean squared y position of the scattering
         target assuming diffusion with scattering rate for the saturation
-        paramter S"""
+        parameter S"""
         R_scat = gamma_D2 / 2 * S / (1 + S)
         return (sigma_y_min)**2 + 1 / (18 * pi) * R_scat * v_recoil**2 * t**3
 
@@ -870,16 +889,23 @@ def compute_linear_density():
     with h5py.File(processed_data_h5) as processed_data:
         A_meas = processed_data['integrated_reconstructed_average_absorbed_fraction']
         S0 = processed_data['max_absorption_saturation_parameter']
+        u_A_meas = processed_data['u_integrated_reconstructed_average_absorbed_fraction']
 
         linear_density = np.zeros(A_meas.shape)
+        u_linear_density = np.zeros(A_meas.shape)
         for i in tqdm(range(n_realisations), desc='  computing linear density'):
             for j in tqdm(range(A_meas.shape[1]), desc='    over pixels ...'):
                 linear_density[i, j] = linear_density_from_a_meas(A_meas[i, j], S0[i, j])
-
+                # Propagate the uncertainty by numerically differentiating the
+                # model using a small step size:
+                dA_meas = u_A_meas[i, j] / 100.0
+                n_plus_dn = linear_density_from_a_meas(A_meas[i, j] + dA_meas, S0[i, j])
+                u_linear_density[i, j] = u_A_meas[i, j] * np.abs(n_plus_dn - linear_density[i, j]) / dA_meas
         h5_save(processed_data, 'linear_density', linear_density)
+        h5_save(processed_data, 'u_linear_density', u_linear_density)
 
 
-def make_uncertainty_map():
+def compute_naive_linear_density_uncertainty():
     """Make approximate uncertainties for the linear densities. The general
     strategy here is to compute the statistical uncertainty of a linear
     density computed as the integral of a naive OD, itself computed from the
@@ -888,7 +914,7 @@ def make_uncertainty_map():
     error of the mean of slice-reconstructed absorbed fractions, which
     approximates that the probe image has no uncertainty."""
 
-    print('Making uncertainty map')
+    print('Making naive linear density uncertainty map')
 
     with h5py.File(raw_data_h5, 'r') as raw_data:
         final_dipole = raw_data['final_dipole'][:]
@@ -899,12 +925,14 @@ def make_uncertainty_map():
         A = processed_data['reconstructed_average_absorbed_fraction_ROI'][:]
         S = processed_data['max_absorption_saturation_parameter'][:]
 
-        # Compute the standard deviation of the reconstructed pre-averaged absorbed fractions, and divide by sqrt(N) to get
-        # the uncertainty in their averages:
+        # Compute the standard deviation of the reconstructed pre-averaged absorbed
+        # fractions, and divide by sqrt(N) to get the uncertainty in their mean:
         u_A = np.zeros(A.shape)
         for i, (tof_val, dipole_val) in tqdm(enumerate(realisations), total=n_realisations, desc='  computing standard deviations'):
             matching_shots = (final_dipole == dipole_val) & (short_TOF == tof_val)
             u_A[i] = reconstructed_absorbed_fraction_ROI[matching_shots, :, :].std(axis=0) / np.sqrt(matching_shots.sum())
+            # 10px smoothing on u_A:
+            u_A[i] = uniform_filter(u_A[i], size=10)
 
         outdir_uA = os.path.join(PROCESS_DATA_OUTDIR, 'uncertainty_absorbed_fraction')
         if not os.path.exists(outdir_uA):
@@ -914,7 +942,6 @@ def make_uncertainty_map():
             concatenated = np.concatenate((A[i], u_A[i]), axis=0)
             plt.imsave(os.path.join(outdir_uA, f'{i:04d}.png'), concatenated, vmin=-0.5, vmax=0.5, cmap='seismic')
 
-
         # propagate u_A through the OD expression:
         u_OD = (alpha/(1-A) + S[:, np.newaxis, :]) * u_A
 
@@ -922,30 +949,31 @@ def make_uncertainty_map():
         u_colsum_OD = np.sqrt((u_OD**2).sum(axis=1))
 
         # multiply by dy to get the uncertainty in the integral:
-        u_linear_density = u_colsum_OD * dy_pixel / sigma_0 
+        u_naive_linear_density = u_colsum_OD * dy_pixel / sigma_0 
 
         # Save it:
-        h5_save(processed_data, 'u_linear_density', u_linear_density)
+        h5_save(processed_data, 'u_naive_linear_density', u_naive_linear_density)
+
 
 def plot_linear_density():
     """Plot the linear densities and compare to "naive" linear densities"""
     with h5py.File(processed_data_h5) as processed_data:
         naive_linear_density = processed_data['naive_linear_density']
+        u_naive_linear_density = processed_data['u_naive_linear_density']
         linear_density = processed_data['linear_density']
         u_linear_density = processed_data['u_linear_density']
 
         outdir_linear_density = os.path.join(PROCESS_DATA_OUTDIR, 'linear_density')
+        outdir_uncertainties = os.path.join(PROCESS_DATA_OUTDIR, 'u_linear_density')
         if not os.path.exists(outdir_linear_density):
             os.mkdir(outdir_linear_density)
+        if not os.path.exists(outdir_uncertainties):
+            os.mkdir(outdir_uncertainties)
 
         for i in tqdm(range(n_realisations), desc='plotting linear density'):
-            # plt.fill_between(range(len(linear_density[i])),
-            #                  11 - (u_linear_density[i])/1e6,
-            #                  11 + (u_linear_density[i])/1e6,
-            #                  facecolor='k', alpha=0.5, label=R'$\pm1\sigma$ uncertainty range')
             plt.errorbar(range(len(linear_density[i])),
                          naive_linear_density[i]/1e6,
-                         yerr=u_linear_density[i]/1e6,
+                         yerr=u_naive_linear_density[i]/1e6,
                          label='naive linear density',
                          fmt='o',  markersize=0.0, capsize=1, lw=0.5)
 
@@ -960,7 +988,25 @@ def plot_linear_density():
             plt.legend()
             plt.grid(True)
             plt.axis([0, 648, -2, 16])
-            plt.savefig(os.path.join(outdir_linear_density, f'{i:02d}.png'))
+            plt.savefig(os.path.join(outdir_linear_density, f'{i:02d}.png'), dpi=300)
+            plt.clf()
+
+        # Plot just the uncertainties:
+        for i in tqdm(range(n_realisations), desc='plotting uncertainty in linear density'):
+            plt.plot(range(len(linear_density[i])),
+                         u_naive_linear_density[i]/1e6,
+                         label='naive linear density', lw=0.5)
+
+            plt.plot(range(len(linear_density[i])),
+                         u_linear_density[i]/1e6,
+                         label='modelled linear density', lw=0.5)
+
+            plt.ylabel('uncertainty in linear density (per um)')
+            plt.xlabel('x pixel')
+            plt.legend()
+            plt.grid(True)
+            plt.axis([0, 648, 0, 2])
+            plt.savefig(os.path.join(outdir_uncertainties, f'{i:02d}.png'))
             plt.clf()
 
         plt.plot([-5,12], [-5,12], 'k--')
@@ -971,27 +1017,26 @@ def plot_linear_density():
         plt.ylabel('modelled linear density (per um)')
         plt.grid(True)
         plt.axis([-5, 12, -5, 12])
-        plt.savefig(os.path.join(PROCESS_DATA_OUTDIR, 'linear_density_comparison.png'))
-
+        plt.savefig(os.path.join(PROCESS_DATA_OUTDIR, 'linear_density_comparison.png'), dpi=300)
 
 if __name__ == '__main__':
-    # save_pca_images()
-    # compute_mean_raw_images()
-    # compute_dark_systematic_offset()
-    # reconstruct_probe_frames()
-    # plot_reconstructed_probe_frames()
-    # reconstruct_dark_frames()
-    # plot_reconstructed_dark_frames()
-    # compute_OD_and_absorption_and_saturation_parameter()
-    # plot_OD_and_absorption_and_saturation_parameter()
-    # compute_averages()
-    # reconstruct_absorbed_fraction()
-    # plot_reconstructed_absorbed_fraction()
-    # compute_max_absorption_saturation_parameter()
-    # compute_reconstructed_naive_average_OD()
-    # compute_naive_linear_density()
-    # compute_linear_density()
-    # make_uncertainty_map()
-    # plot_linear_density()
+    save_pca_images()
+    compute_mean_raw_images()
+    compute_dark_systematic_offset()
+    reconstruct_probe_frames()
+    plot_reconstructed_probe_frames()
+    reconstruct_dark_frames()
+    plot_reconstructed_dark_frames()
+    compute_OD_and_absorption_and_saturation_parameter()
+    plot_OD_and_absorption_and_saturation_parameter()
+    compute_averages()
+    reconstruct_absorbed_fraction()
+    plot_reconstructed_absorbed_fraction()
+    compute_max_absorption_saturation_parameter()
+    compute_reconstructed_naive_average_OD()
+    compute_naive_linear_density()
+    compute_naive_linear_density_uncertainty()
+    compute_linear_density()
+    plot_linear_density()
 
     
