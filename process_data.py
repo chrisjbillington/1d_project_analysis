@@ -36,9 +36,12 @@ ROI_y_stop = 255
 ROI_mask = np.ones(image_shape)
 ROI_mask[ROI_y_start:ROI_y_stop, ROI_x_start:ROI_x_stop] = 0
 
-# Parameters for computing optical densities etc:
-Isat, alpha = 127.0, 0.92
-magnification =  6.66
+# Imaging parameters:
+with h5py.File('calibrations.h5') as f:
+    Isat = f['Isat/Isat'].value
+    alpha = f['Isat/alpha'].value
+    magnification = f['magnification/M_bar'].value
+
 pixel_size = 5.6e-6
 dy_pixel = pixel_size / magnification
 tau = 20e-6 # imaging pulse duration
@@ -50,6 +53,9 @@ gamma_D2 = 1/26.2348e-9
 m_Rb = 1.443160648e-25
 sigma_0 = 3*lambda_Rb**2 / (2*pi)
 v_recoil = 2*pi*hbar/(m_Rb * lambda_Rb)
+
+# The shot we use for comparison of non-averaged with averaged data:
+SHOT_OF_INTEREST = 313
 
 
 def gaussian_blur(image, px):
@@ -663,7 +669,7 @@ def reconstruct_absorbed_fraction():
         h5_save(processed_data, 'reconstructed_absorbed_fraction_ROI', reconstructed_absorbed_fraction_ROI)
         h5_save(processed_data, 'reconstructed_average_absorbed_fraction_ROI', reconstructed_average_absorbed_fraction_ROI)
         h5_save(processed_data, 'integrated_reconstructed_average_absorbed_fraction', integrated_reconstructed_average_absorbed_fraction)
-        h5_save(processed_data, 'integrated_reconstructed_absorbed_fraction', integrated_reconstructed_average_absorbed_fraction)
+        h5_save(processed_data, 'integrated_reconstructed_absorbed_fraction', integrated_reconstructed_absorbed_fraction)
         h5_save(processed_data, 'u_integrated_reconstructed_average_absorbed_fraction', u_integrated_reconstructed_average_absorbed_fraction)
 
         # plot them:
@@ -757,16 +763,25 @@ def compute_max_absorption_saturation_parameter():
 
         # Interpolate the saturation parameter at these points for each
         # realisation:
-
         S0 = np.zeros((n_realisations, S.shape[2]))
-        for i in tqdm(range(n_realisations), desc='  interpolating saturation parameter'):
+        for i in tqdm(range(n_realisations), desc='  interpolating saturation parameter over average shots'):
             for x_index in x:
                 interpolator = interp1d(y, S[i, :, x_index])
                 S_interp = interpolator(y0[x_index])
                 S0[i, x_index] = S_interp
 
-        h5_save(processed_data, 'max_absorption_saturation_parameter', S0)
+        h5_save(processed_data, 'max_absorption_average_saturation_parameter', S0)
 
+        # And for each shot:
+        S_individual = processed_data['saturation_parameter'][:, ROI_y_start:ROI_y_stop, ROI_x_start:ROI_x_stop]
+        S0_individual = np.zeros((n_shots, S_individual.shape[2]))
+        for i in tqdm(range(n_shots), desc='  interpolating saturation parameter over all shots'):
+            for x_index in x:
+                interpolator = interp1d(y, S_individual[i, :, x_index])
+                S_interp = interpolator(y0[x_index])
+                S0_individual[i, x_index] = S_interp
+
+        h5_save(processed_data, 'max_absorption_saturation_parameter', S0_individual)
 
 def compute_reconstructed_naive_average_OD():
     """based on the reconstructed absorbed fractions and saturation parameter,
@@ -779,7 +794,7 @@ def compute_reconstructed_naive_average_OD():
         os.mkdir(outdir)
  
     with h5py.File(processed_data_h5) as processed_data:
-        S0 = processed_data['max_absorption_saturation_parameter']
+        S0 = processed_data['max_absorption_average_saturation_parameter']
         A = processed_data['reconstructed_average_absorbed_fraction_ROI']
         reconstructed_naive_average_OD = np.zeros(A.shape)
         for i in tqdm(range(n_realisations), desc='  computing naive recon. OD'):
@@ -882,18 +897,37 @@ def compute_linear_density():
     def linear_density_from_a_meas(A_meas, S):
         """Inverse of above. Compute the linear density given a t and y
         integrated absorbed fraction A_meas"""
-        return brentq(lambda n_1d: A_meas_from_linear_density(n_1d, S) - A_meas, -20/1e-6, 20/1e-6)
+        try:
+            return brentq(lambda n_1d: A_meas_from_linear_density(n_1d, S) - A_meas, -20/1e-6, 20/1e-6)
+        except ValueError:
+            # Density higher than 20 per micron, numerics break here and no finite
+            # density may solve the equation. Return NaN. Likely a result of shot
+            # noise giving the appearance of greater than unity fractional absorption.
+            if A_meas_from_linear_density(20/1e-6, S) - A_meas < 0:
+                return np.nan
+            raise
 
     print('inverting absorption model to obtain linear densities')
 
     with h5py.File(processed_data_h5) as processed_data:
+
+        # Compute the linear density of one shot for comparison with the averages
+        # (it takes too long to compute for all shots):
+        S0_individual = processed_data['max_absorption_saturation_parameter']
+        A_meas_shot_of_interest = processed_data['integrated_reconstructed_absorbed_fraction'][SHOT_OF_INTEREST]
+        linear_density_shot_of_interest = np.zeros(A_meas_shot_of_interest.shape)
+        for j in tqdm(range(A_meas_shot_of_interest.shape[0]), desc=f'  for shot {SHOT_OF_INTEREST} ...'):
+            linear_density_shot_of_interest[j] = linear_density_from_a_meas(A_meas_shot_of_interest[j], S0_individual[SHOT_OF_INTEREST, j])
+        h5_save(processed_data, 'linear_density_shot_of_interest', linear_density_shot_of_interest)
+
+        # Compute linear density of averaged shots:
+        S0 = processed_data['max_absorption_average_saturation_parameter']
         A_meas = processed_data['integrated_reconstructed_average_absorbed_fraction']
-        S0 = processed_data['max_absorption_saturation_parameter']
         u_A_meas = processed_data['u_integrated_reconstructed_average_absorbed_fraction']
 
         linear_density = np.zeros(A_meas.shape)
         u_linear_density = np.zeros(A_meas.shape)
-        for i in tqdm(range(n_realisations), desc='  computing linear density'):
+        for i in tqdm(range(n_realisations), desc='  over averages'):
             for j in tqdm(range(A_meas.shape[1]), desc='    over pixels ...'):
                 linear_density[i, j] = linear_density_from_a_meas(A_meas[i, j], S0[i, j])
                 # Propagate the uncertainty by numerically differentiating the
@@ -923,7 +957,7 @@ def compute_naive_linear_density_uncertainty():
     with h5py.File(processed_data_h5) as processed_data:
         reconstructed_absorbed_fraction_ROI = processed_data['reconstructed_absorbed_fraction_ROI']
         A = processed_data['reconstructed_average_absorbed_fraction_ROI'][:]
-        S = processed_data['max_absorption_saturation_parameter'][:]
+        S = processed_data['max_absorption_average_saturation_parameter'][:]
 
         # Compute the standard deviation of the reconstructed pre-averaged absorbed
         # fractions, and divide by sqrt(N) to get the uncertainty in their mean:
@@ -991,6 +1025,40 @@ def plot_linear_density():
             plt.savefig(os.path.join(outdir_linear_density, f'{i:02d}.png'), dpi=300)
             plt.clf()
 
+        # Plot the linear density of the shot-of-interest:
+        linear_density_shot_of_interest = processed_data['linear_density_shot_of_interest'][:]
+
+        # Also plot the mean from that realisation:
+        with h5py.File(raw_data_h5, 'r') as raw_data:
+            final_dipole = raw_data['final_dipole'][:]
+            short_TOF = raw_data['short_TOF'][:]
+
+        realisation_final_dipole = processed_data['realisation_final_dipole']
+        realisation_short_TOF = processed_data['realisation_short_TOF']
+        matching_shots = ((realisation_final_dipole[:] == final_dipole[SHOT_OF_INTEREST])
+                          & (realisation_short_TOF[:] == short_TOF[SHOT_OF_INTEREST]))
+        realisation_of_interest = np.nonzero(matching_shots)[0][0]
+
+        plt.plot(range(len(linear_density_shot_of_interest)),
+                     linear_density_shot_of_interest/1e6, 'o', markersize=1,
+                     label='modelled single linear density')
+
+        plt.errorbar(range(len(linear_density[realisation_of_interest])),
+                     linear_density[realisation_of_interest]/1e6,
+                     yerr=u_linear_density[i]/1e6,
+                     label='modelled average linear density',
+                     fmt='o',  markersize=0.0, capsize=1, lw=0.5)
+
+
+        plt.ylabel('linear density (per um)')
+        plt.xlabel('x pixel')
+        plt.legend()
+        plt.grid(True)
+        plt.axis([0, 648, -2, 16])
+        plt.savefig(os.path.join(outdir_linear_density, f'shot_{SHOT_OF_INTEREST}.png'), dpi=300)
+        plt.clf()
+
+
         # Plot just the uncertainties:
         for i in tqdm(range(n_realisations), desc='plotting uncertainty in linear density'):
             plt.plot(range(len(linear_density[i])),
@@ -1019,24 +1087,25 @@ def plot_linear_density():
         plt.axis([-5, 12, -5, 12])
         plt.savefig(os.path.join(PROCESS_DATA_OUTDIR, 'linear_density_comparison.png'), dpi=300)
 
+
 if __name__ == '__main__':
-    save_pca_images()
+    # save_pca_images()
     compute_mean_raw_images()
     compute_dark_systematic_offset()
     reconstruct_probe_frames()
-    plot_reconstructed_probe_frames()
+    # plot_reconstructed_probe_frames()
     reconstruct_dark_frames()
-    plot_reconstructed_dark_frames()
+    # plot_reconstructed_dark_frames()
     compute_OD_and_absorption_and_saturation_parameter()
-    plot_OD_and_absorption_and_saturation_parameter()
+    # plot_OD_and_absorption_and_saturation_parameter()
     compute_averages()
     reconstruct_absorbed_fraction()
-    plot_reconstructed_absorbed_fraction()
+    # plot_reconstructed_absorbed_fraction()
     compute_max_absorption_saturation_parameter()
     compute_reconstructed_naive_average_OD()
     compute_naive_linear_density()
     compute_naive_linear_density_uncertainty()
     compute_linear_density()
-    plot_linear_density()
+    # plot_linear_density()
 
     
