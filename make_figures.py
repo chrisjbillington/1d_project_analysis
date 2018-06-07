@@ -33,6 +33,7 @@ processed_data_h5 = 'processed_data.h5'
 fit_outputs_h5 = 'fit_outputs.h5'
 sfit_outputs_h5 = 'fit_outputs_subset.h5'
 three_body_h5 = 'three_body.h5'
+calibrations_h5 = 'calibrations.h5'
 
 def load_data(dataset_h5, dataset_id):
     with h5py.File(dataset_h5, 'r') as dataset_h5:
@@ -488,48 +489,8 @@ def plot_figure_1_draft(save_plots=False):
             plt.savefig(f'Fig_1d.pdf')
             plt.clf()
 
-    def build_fig_1_e():
-        gamma = np.linspace(1e-3, 1e2, 2**12)
-        t = np.linspace(1e-3, 1e4, 2**12)
-
-        border_1 = np.sqrt(gamma[gamma<=1e0])
-        border_2 = gamma[gamma>=1e0]**2
-
-        __fig__ = setup_figure()
-        ax = plt.subplot(111)
-        ax.plot((gamma[gamma<1e0]), (border_1), 'k',
-                 (gamma[gamma>1e0]), (border_2), 'k',
-                  np.ones(t.shape), t, 'k', gamma, np.ones(gamma.shape), 'k')
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-        ax.fill_between(gamma[gamma<1e0], 1e-3, border_1, where=border_1>1e-3, 
-                        facecolor='blue', alpha=0.5, label='Quasi-condensate')
-        ax.fill_between(gamma[gamma>1e0], 1e-3, border_2, where=border_2>1e-3,
-                        facecolor='red', alpha =0.5, label='Strong Coupling')
-        ax.fill_between(gamma[gamma>1e0], border_2, 1e4, where=border_2<1e4, 
-                        facecolor='green', alpha=0.5, label='Weak Coupling')
-        ax.fill_between(gamma[gamma<1e0], border_1, 1e4, where=border_1<1e4, 
-                        facecolor='green', alpha=0.5, label='Weak Coupling')
-        label_current_ax(fig=__fig__, xlabel='$\gamma$', ylabel='$T/T_d$')
-        plt.xlim([1e-3, 1e2])
-        plt.ylim([1e-3, 1e4])
-
-        #ax.text(4e-3, 2e2, 'Weak Coupling', style='normal',
-        #        bbox={'facecolor':'yellow', 'alpha':1.0, 'pad':10})
-        #ax.text(0.35e1, 2e-1, 'Strong Coupling', style='normal',
-        #        bbox={'facecolor':'yellow', 'alpha':1.0, 'pad':10})
-        #ax.text(1e-2, 1e-2, 'Quasi-Condensate', style='normal',
-        #        bbox={'facecolor':'yellow', 'alpha':1.0, 'pad':10})
-        plt.tight_layout()
-        plt.subplots_adjust(hspace=0.1)
-
-        if save_plots:
-            plt.savefig(f'Fig_1e.pdf')
-            plt.clf()
-
     #build_fig_1_b()
-    build_fig_1_a_c_d()
-    #build_fig_1_e()
+    #build_fig_1_a_c_d()
 
     #####################################################################################
     #####                                                                           #####
@@ -606,17 +567,42 @@ def plot_figure_2_draft(save_plots=False):
 
     voltages = np.linspace(-0.0, 1.0, 2**8)
     powers = sine_squared(voltages, *parameters)
-    plt.scatter(AO_command, calibrated_P, c='k')
-    plt.plot(voltages, powers)
+    #plt.scatter(AO_command, calibrated_P, c='k')
+    #plt.plot(voltages, powers)
 
-    import IPython
-    IPython.embed()
+    from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+
+    load_inset_0 = plt.imread('load_step_0.png')
+    load_inset_1 = plt.imread('load_step_1.png')
+    load_inset_2 = plt.imread('load_step_2.png')
+    load_inset_3 = plt.imread('load_step_3.png')
 
     __fig__ = setup_figure()
     ax1 = plt.subplot(111)
     ax1.plot(time, green_ramp, c='limegreen', ls='-', lw=3.0, label='Blue-detuned')
     ax1.plot(time, long_ramp, c='maroon', ls='--', lw=3.0, label='Red-detuned')
     ax1.plot(time, cross_ramp, c='cornflowerblue', ls='-.',lw=3.0, label='BEC-cross dipole trap')
+
+    inset_0 = OffsetImage(load_inset_0, zoom=0.012)
+    inset_0.image.axes = ax1
+    ab_0 = AnnotationBbox(inset_0, [0.125, 1.2])
+    ax1.add_artist(ab_0)
+    
+    inset_1 = OffsetImage(load_inset_1, zoom=0.012)
+    inset_1.image.axes = ax1
+    ab_1 = AnnotationBbox(inset_1, [0.375, 1.2])
+    ax1.add_artist(ab_1)
+
+    inset_2 = OffsetImage(load_inset_2, zoom=0.012)
+    inset_2.image.axes = ax1
+    ab_2 = AnnotationBbox(inset_2, [0.625, 1.2])
+    ax1.add_artist(ab_2)
+
+    inset_3 = OffsetImage(load_inset_3, zoom=0.012)
+    inset_3.image.axes = ax1
+    ab_3 = AnnotationBbox(inset_3, [0.875, 1.2])
+    ax1.add_artist(ab_3)
+
     ax1.axvline(250*ms, c='k', ls='--', lw=1.0, alpha=0.5)
     ax1.axvline(500*ms, c='k', ls='--', lw=1.0, alpha=0.5)
     ax1.axvline(750*ms, c='k', ls='--', lw=1.0, alpha=0.5)
@@ -625,7 +611,7 @@ def plot_figure_2_draft(save_plots=False):
     ax1.text(600*ms, 0.8, s='(iii)')
     ax1.text(825*ms, 0.8, s='(iv)')
     #ax1.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
-    plt.ylim([0, 1.0])
+    plt.ylim([0, 1.4])
     plt.xlim([0., 1.0])
     label_current_ax(__fig__, xlabel='$t \,(s)$', ylabel='Intensity (a .u.)')
     #plt.title('Loading ramps', loc='left')
@@ -633,7 +619,7 @@ def plot_figure_2_draft(save_plots=False):
     #plt.legend()
 
     if save_plots:
-        plt.savefig(f'Fig_2.pdf')
+        plt.savefig(f'Fig_2.pdf', dpi=500)
         plt.clf()
 
     #####################################################################################
@@ -683,6 +669,55 @@ def plot_figure_3_draft(save_plots=False):
     # kth_A, kth_B = compute_kth(T_A), compute_kth(T_B)
     # import IPython
     # IPython.embed()
+
+    def build_fig_1_e():
+        density_A_units = 1/(hbar**2/(2*mass*g1D_A))
+        gamma_A = density_A_units/density_A
+        t_A = T_A/(hbar**2*density_A**2/(2*mass*kB))
+
+        density_B_units = 1/(hbar**2/(2*mass*g1D_B))
+        gamma_B = density_B_units/density_B
+        t_B = T_B/(hbar**2*density_B**2/(2*mass*kB))
+
+        gamma = np.linspace(1e-4, 1e2, 2**12)
+        t = np.linspace(1e-4, 1e2, 2**12)
+
+        border_1 = np.sqrt(gamma[gamma<=1e0])**2
+        border_2 = gamma[gamma>=1e0]**0
+
+        __fig__ = setup_figure()
+        ax = plt.subplot(111)
+        ax.plot((gamma[gamma<1e0]), (border_1), 'k',
+                 (gamma[gamma>1e0]), (border_2), 'k',
+                  np.ones(t.shape), t, 'k', gamma, np.ones(gamma.shape), 'k')
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        ax.fill_between(gamma[gamma<1e0], 1e-3, border_1, where=border_1>1e-6, 
+                        facecolor='cornflowerblue', alpha=0.75, label='Quasi-condensate')
+        ax.fill_between(gamma[gamma>1e0], 1e-3, border_2, where=border_2>1e-3,
+                        facecolor='red', alpha =0.5, label='Strong Coupling')
+        ax.fill_between(gamma[gamma>1e0], border_2, 1e4, where=border_2<1e4, 
+                        facecolor='green', alpha=0.5, label='Weak Coupling')
+        ax.fill_between(gamma[gamma<1e0], border_1, 1e4, where=border_1<1e4, 
+                        facecolor='green', alpha=0.5, label='Weak Coupling')
+        ax.scatter(gamma_A[30:130], t_A[30:130], c='white', edgecolor='k')
+        ax.scatter(gamma_B[30:130], t_B[30:130], c='white', edgecolor='k')
+        label_current_ax(fig=__fig__, xlabel='$\gamma$', ylabel='$T/T_d$')
+        plt.xlim([1e-3, 1e2])
+        plt.ylim([1e-3, 1e2])
+
+        #ax.text(4e-3, 2e2, 'Weak Coupling', style='normal',
+        #        bbox={'facecolor':'yellow', 'alpha':1.0, 'pad':10})
+        #ax.text(0.35e1, 2e-1, 'Strong Coupling', style='normal',
+        #        bbox={'facecolor':'yellow', 'alpha':1.0, 'pad':10})
+        #ax.text(1e-2, 1e-2, 'Quasi-Condensate', style='normal',
+        #        bbox={'facecolor':'yellow', 'alpha':1.0, 'pad':10})
+        plt.tight_layout()
+        plt.subplots_adjust(hspace=0.1)
+
+        if save_plots:
+            plt.savefig(f'Fig_1e.pdf')
+            plt.clf()
     
     def build_fig_3_a():
         __fig__ = setup_figure()
@@ -736,16 +771,29 @@ def plot_figure_3_draft(save_plots=False):
 
     # Temperature calibration
     def temperature(final_dipole):
-        return 2*(519.916*nK*final_dipole - 247.7625*nK)
+        slope = load_data(calibrations_h5, 'T3D/slope')
+        intercept = load_data(calibrations_h5, 'T3D/intercept')
+        # Old calibration < 2*(519.916*nK*final_dipole - 247.7625*nK)
+        u_slope = load_data(calibrations_h5, 'T3D/u_slope')
+        u_intercept = load_data(calibrations_h5, 'T3D/u_intercept')
+        temps = (slope*final_dipole + intercept)*nK
+        u_temps = np.sqrt(slope**2*0.01**2+final_dipole**2*u_slope**2+u_intercept**2)*nK
+        return temps, u_temps
 
     full_density_dataset = load_data(processed_data_h5, 'linear_density')
     full_density_dataset[10, 646] = 0.
-    peak_degeneracy_temps = np.array([hbar**2*n0.max()**2/(2*mass*kB*nK) for n0 in full_density_dataset])
+    u_density_dataset = load_data(processed_data_h5, 'u_linear_density')
     mu0_set = load_data(fit_outputs_h5, 'global_fit_mu0_set')
     u_mu0_set = load_data(fit_outputs_h5, 'global_fit_u_mu0_set')
     temp_set = load_data(fit_outputs_h5, 'global_fit_temp_set')
     u_temp_set = load_data(fit_outputs_h5, 'global_fit_u_temp_set')
-    temp_realization = temperature(load_data(processed_data_h5, 'realisation_final_dipole'))
+    n_max = full_density_dataset[:, 285:300].mean(axis=1)
+    u_n_max = u_density_dataset[:, 285:300].mean(axis=1)
+    peak_degeneracy_temps = hbar**2*n_max**2/(2*mass*kB)
+    u_Td0 = hbar**2*n_max*u_n_max/(2*mass*kB)
+    u_T_Td0 = np.sqrt(u_temp_set**2/peak_degeneracy_temps**2 + temp_set**2*u_Td0**2/peak_degeneracy_temps**4)
+
+    temp_realization, u_temp_realization = temperature(load_data(processed_data_h5, 'realisation_final_dipole'))
     time_realization = load_data(processed_data_h5, 'realisation_short_TOF')
 
     def build_fig_3_b():
@@ -756,54 +804,52 @@ def plot_figure_3_draft(save_plots=False):
         ax3 = plt.subplot(223, sharex = ax1)
         ax4 = plt.subplot(224, sharex = ax2, sharey = ax3)
 
-        ax1_x, ax1_y = temp_realization[0:19], mu0_set[0:19]/1e3
-        ax1_u_x, ax1_u_y = 4*nK, u_mu0_set[0:19]/1e3
-        ax1_shading = (temp_set[0:19]/nK)/peak_degeneracy_temps[0:19]
-        sc1 = ax1.scatter(ax1_x/nK, ax1_y, c=ax1_shading, cmap='Blues', edgecolor='k')
-        _, _ ,ax1errorlinecollection = ax1.errorbar(ax1_x/nK, ax1_y, xerr=ax1_u_x/nK, yerr=ax1_u_y, 
+        ax1_x, ax1_y = temp_realization[0:19], temp_set[0:19]
+        ax1_u_x, ax1_u_y = u_temp_realization[0:19], u_temp_set[0:19]
+        ax1_shading = (temp_set[0:19])/peak_degeneracy_temps[0:19]
+        sc1 = ax1.scatter(ax1_x/nK, ax1_y/nK, c='cornflowerblue', edgecolor='k')
+        _, _ ,ax1errorlinecollection = ax1.errorbar(ax1_x/nK, ax1_y/nK, xerr=ax1_u_x/nK, yerr=ax1_u_y/nK, 
                                                     marker='', ls='', zorder=0)
-        ax1errorlinecollection[0].set_color('k')
-        ax1errorlinecollection[1].set_color('k')
-        ax1.set_ylabel('$\mu_0 \, (\mathrm{kHz})$', fontsize=14)
-        ax1.set_ylim(0.0, 2.0)
+        ax1errorlinecollection[0].set_color('k'), ax1errorlinecollection[1].set_color('k')
+        ax1.set_ylabel('${T \, (\mathrm{nK})}$', fontsize=14)
+        ax1.set_ylim(0.0, 200.0)
         ax1.set_xlim(0.0, 400.0)
 
-
         ax2_x = np.array([time_realization[0], *time_realization[19::].tolist()])
-        ax2_y = np.array([mu0_set[0], *mu0_set[19::].tolist()])/1e3
-        ax2_u_x, ax2_u_y = 0.001*ms, np.array([u_mu0_set[0], *u_mu0_set[19::].tolist()])/1e3
+        ax2_y = np.array([temp_set[0], *temp_set[19::].tolist()])
+        ax2_u_x, ax2_u_y = 0.001*ms, np.array([u_temp_set[0], *u_temp_set[19::].tolist()])
         ax2_peak_degeneracy_temps = np.array([peak_degeneracy_temps[0], *peak_degeneracy_temps[19::].tolist()])
         ax2_temps = np.array([temp_set[0], *temp_set[19::].tolist()])
-        ax2_shading = (ax2_temps/nK)/ax2_peak_degeneracy_temps
-        ax2.scatter(ax2_x, ax2_y, c=ax2_shading, cmap='Blues', edgecolor='k')
-        _, _, ax2errorlinecollection = ax2.errorbar(ax2_x, ax2_y, xerr=ax2_u_x, yerr=ax2_u_y,
+        ax2_shading = (ax2_temps)/ax2_peak_degeneracy_temps
+        ax2.scatter(ax2_x, ax2_y/nK, c='cornflowerblue', edgecolor='k')
+        _, _, ax2errorlinecollection = ax2.errorbar(ax2_x, ax2_y/nK, xerr=ax2_u_x, yerr=ax2_u_y/nK,
                                                     marker='', ls='', zorder=0)
         ax2errorlinecollection[0].set_color('k'), ax2errorlinecollection[1].set_color('k')
-        ax2.set_ylim(0.0, 2.0)
+        ax2.set_ylim(0.0, 200.0)
         ax2.set_xlim(-0.1, 5.1)
 
         ax3_x, ax3_y = ax1_x, temp_set[0:19]
-        ax3_u_x, ax3_u_y = ax1_u_x, u_temp_set[0:19]
+        ax3_u_x, ax3_u_y = ax1_u_x, u_T_Td0[0:19]
         ax3_shading = ax1_shading
-        ax3.scatter(ax3_x/nK, ax3_shading, c=ax3_y/nK, cmap='Blues', edgecolor='k')
-        #_, _, ax3errorlinecollection = ax3.errorbar(ax3_x/nK, ax3_y/nK, xerr=ax3_u_x/nK, yerr=ax3_u_y/nK,
-        #                                            marker='', ls='', zorder=0)
-        #ax3errorlinecollection[0].set_color('k'), ax3errorlinecollection[1].set_color('k')
-        ax3.set_xlabel('$T_{\mathrm{3D}}\, (\mathrm{nK})$', fontsize=14)
+        ax3.scatter(ax3_x/nK, ax3_shading, c='cornflowerblue', edgecolor='k')
+        _, _, ax3errorlinecollection = ax3.errorbar(ax3_x/nK, ax3_shading, xerr=ax3_u_x/nK, yerr=ax3_u_y,
+                                                    marker='', ls='', zorder=0)
+        ax3errorlinecollection[0].set_color('k'), ax3errorlinecollection[1].set_color('k')
+        ax3.set_xlabel('${T_{\mathrm{3D}}\, (\mathrm{nK})}$', fontsize=14)
         ax3.set_ylabel('$T/T_d^{(0)}$', fontsize=14)
-        ax3.set_ylim(0.0, 5.0)
+        ax3.set_ylim(0.0, 6.1)
         ax3.set_xlim(0.0, 400.0)
 
 
         ax4_x, ax4_y = ax2_x, np.array([temp_set[0], *temp_set[19::].tolist()])
-        ax4_u_x, ax4_u_y = ax2_u_x, np.array([u_temp_set[0], *u_temp_set[19::].tolist()])
+        ax4_u_x, ax4_u_y = ax2_u_x, np.array([u_T_Td0[0], *u_T_Td0[19::].tolist()])
         ax4_shading = ax2_shading
-        ax4.scatter(ax4_x, ax4_shading, c=ax4_y/nK, cmap='Blues', edgecolor='k')
-        #_, _, ax4errorlinecollection = ax4.errorbar(ax4_x, ax4_y/nK, xerr=ax4_u_x, yerr=ax4_u_y/nK,
-        #                                            marker='', ls='', zorder=0)
-        #ax4errorlinecollection[0].set_color('k'), ax4errorlinecollection[1].set_color('k')
+        ax4.scatter(ax4_x, ax4_shading, c='cornflowerblue', edgecolor='k')
+        _, _, ax4errorlinecollection = ax4.errorbar(ax4_x, ax4_shading, xerr=ax4_u_x, yerr=ax4_u_y,
+                                                   marker='', ls='', zorder=0)
+        ax4errorlinecollection[0].set_color('k'), ax4errorlinecollection[1].set_color('k')
         ax4.set_xlabel('$t (s)$', fontsize=14)
-        ax4.set_ylim(0.0, 5.0)
+        ax4.set_ylim(0.0, 6.1)
         ax4.set_xlim(-0.1, 5.1)
 
         plt.setp(ax1.get_xticklabels(), visible=False)
@@ -814,10 +860,10 @@ def plot_figure_3_draft(save_plots=False):
         plt.tight_layout()
 
         all_axes = np.array([ax1, ax2, ax3, ax4])
-        cbar = plt.colorbar(mappable=sc1, ax=all_axes.ravel().tolist(), orientation='vertical',
-                            fraction=0.05, pad=0.05, shrink=0.8)
-        cbar.set_label('$T/T_d^{(0)}$')
-        cbar.set_clim(0., ax1_shading.max())
+        #cbar = plt.colorbar(mappable=sc1, ax=all_axes.ravel().tolist(), orientation='vertical',
+        #                    fraction=0.05, pad=0.05, shrink=0.8)
+        #cbar.set_label('$T/T_d^{(0)}$')
+        #cbar.set_clim(0., ax1_shading.max())
     
         if save_plots:
             plt.savefig(f'Fig_3b.pdf')
@@ -837,35 +883,39 @@ def plot_figure_3_draft(save_plots=False):
     # plt.tight_layout()
     # plt.legend()
     
-    number_set = np.array([np.sum(n*pix_size) for n in full_density_dataset])
-    number = np.array([number_set[0], *number_set[19::].tolist()])
-    number_decay = load_data(three_body_h5, 'OneThree_Body_Decay')
-    fit_number_decay = load_data(three_body_h5, 'Fit_OneThree_Body_Decay')
-    time = np.linspace(0.0, 5.0, np.size(number_decay))
+    number = load_data(three_body_h5, 'Number_decay')
+    u_number_decay = load_data(three_body_h5, 'u_number_decay')
+    fit_number_decay = load_data(three_body_h5, 'Fit_One_Two_Three_Body_Decay')
+    time = np.linspace(0., 5., np.size(number))
+    fit_time = np.linspace(0.0, 5.1, np.size(fit_number_decay))
     
     def build_fig_3_c():
         __fig__ = setup_figure()
         ax3 = plt.subplot(111)
-        ax3.scatter(time, number_decay, c='lightskyblue', s=15.0, alpha=0.75, 
-                    label='Number YY-Interpolation')
-        ax3.scatter([0, 1, 2, 3, 4, 5], number, c='r', edgecolor='k', s=30.0, alpha=0.85, 
+        #ax3.set_xscale('log')
+        ax3.set_yscale('log')
+        sc3 = ax3.scatter(time, number, c='cornflowerblue', edgecolor='k', s=30.0, 
                     label='Number data', marker='D')
-        ax3.plot(time, fit_number_decay, lw=2.0, c='midnightblue', label='Decay model')
+        _, _, sc3errorcollection = ax3.errorbar(time, number, xerr=0., yerr=u_number_decay, 
+                                             marker='', ls='', zorder=0)
+        sc3errorcollection[0].set_color('k'), sc3errorcollection[1].set_color('k')
+        ax3.plot(fit_time, fit_number_decay, lw=2.0, c='midnightblue', label='Decay model')
         #ax3.grid(color='k', linestyle='--', linewidth=0.5, alpha=0.25, which='major')
-        plt.ylim([-0., 1500.])
-        plt.xlim([-0.2, 5.2])
-        label_current_ax(__fig__, xlabel='$t \, [s]$', ylabel='$N$')
+        plt.ylim([-0., 2000.])
+        plt.xlim([-0.1, 5.1])
+        label_current_ax(__fig__, xlabel='$t \, (s)$', ylabel='${N}$')
         plt.title('(c)', loc='left')
         plt.tight_layout()
-        plt.legend()
 
         if save_plots:
             plt.savefig(f'Fig_3c.pdf')
             plt.clf()
-
+    
+    #build_fig_1_e()
     #build_fig_3_a()
-    build_fig_3_b()
-    #build_fig_3_c()
+    #build_fig_3_b()
+    build_fig_3_c()
+
 
 #def _V(save_plots=False):
     

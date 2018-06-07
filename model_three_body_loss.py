@@ -121,22 +121,22 @@ def model_pars_in_time(n_points, show_plots=False):
     temp_set = load_data(fit_outputs_h5, 'global_fit_temp_set')
     u_temp_set = load_data(fit_outputs_h5, 'global_fit_u_temp_set')
     time_realization = load_data(processed_data_h5, 'realisation_short_TOF')
-    number_set = np.array([np.sum(n*pix_size) for n in full_density_dataset])
+    number_set = np.array([np.trapz(n, dx=pix_size) for n in full_density_dataset])
 
     # SUBSET 
-    smu0_set = load_data(sfit_outputs_h5, 'global_fit_mu0_set')
-    su_mu0_set = load_data(sfit_outputs_h5, 'global_fit_u_mu0_set')
-    stemp_set = load_data(sfit_outputs_h5, 'global_fit_temp_set')
-    su_temp_set = load_data(sfit_outputs_h5, 'global_fit_u_temp_set')
-    sdensity_dataset = load_data(sfit_outputs_h5, 'global_fit_density_output')
+    smu0_set = load_data(fit_outputs_h5, 'global_fit_mu0_set')
+    su_mu0_set = load_data(fit_outputs_h5, 'global_fit_u_mu0_set')
+    stemp_set = load_data(fit_outputs_h5, 'global_fit_temp_set')
+    su_temp_set = load_data(fit_outputs_h5, 'global_fit_u_temp_set')
+    sdensity_dataset = load_data(fit_outputs_h5, 'global_fit_density_output')
     snumber_set = np.array([np.sum(n*pix_size) for n in sdensity_dataset])
 
     hold_times = np.array([time_realization[0], *time_realization[19::].tolist()])
-    mu0s = np.array([mu0_set[0], *smu0_set[0::].tolist()])
-    u_mu0s = np.array([u_mu0_set[0], *su_mu0_set[0::].tolist()])
-    T0s = np.array([temp_set[0], *stemp_set[0::].tolist()])
-    u_T0s = np.array([u_temp_set[0], *su_temp_set[0::].tolist()])
-    number = np.array([number_set[0], *snumber_set[0::].tolist()])
+    mu0s = np.array([mu0_set[0], *mu0_set[19::].tolist()])
+    u_mu0s = np.array([u_mu0_set[0], *u_mu0_set[19::].tolist()])
+    T0s = np.array([temp_set[0], *temp_set[19::].tolist()])
+    u_T0s = np.array([u_temp_set[0], *u_temp_set[19::].tolist()])
+    number = np.array([number_set[0], *number_set[19::].tolist()])
     u_number = 200*np.ones_like(number)
     
     def exponential_decay(t, t0, tau_1, tau_2, yi, yf, how_fast_percent):
@@ -200,9 +200,9 @@ def model_pars_in_time(n_points, show_plots=False):
     result_number = lmfit_exponential_decay(xdata=hold_times, ydata=number, dydata=u_number)
     result_mu0s = lmfit_lin_exponential_decay(xdata=hold_times, ydata=mu0s, dydata=u_mu0s)
     result_T0s = lmfit_exponential_decay(xdata=hold_times, ydata=T0s, dydata=u_T0s)
-    #report_fit(result_number)
-    #report_fit(result_mu0s)
-    #report_fit(result_T0s)
+    report_fit(result_number)
+    report_fit(result_mu0s)
+    report_fit(result_T0s)
     number_pars = np.array([result_number.params[key].value for key in result_number.params.keys()])
     mu0s_pars = np.array([result_mu0s.params[key].value for key in result_mu0s.params.keys()])
     T0s_pars = np.array([result_T0s.params[key].value for key in result_T0s.params.keys()])
@@ -225,7 +225,7 @@ def model_pars_in_time(n_points, show_plots=False):
         ax2.scatter(hold_times, mu0s, c='C1', edgecolor='k')
         ax2.plot(time_interpolation, model_mu0s, c='C1', lw=1.0)
         plt.xlim([-0.5, 5.5])
-        plt.ylim([-0.5e3, 1.7e3])
+        plt.ylim([-0.5e3, 2.5e3])
 
         ax3 = plt.subplot(133)
         ax3.scatter(hold_times, T0s, c='C2', edgecolor='k')
@@ -237,14 +237,16 @@ def model_pars_in_time(n_points, show_plots=False):
         plt.show()
     return model_number, model_mu0s, model_T0s
 
-def interpolate_yang_yang_density_and_integrate(n_points):
+def compute_interpolated_YY_quantities(n_points):
     _, mus, Ts = model_pars_in_time(n_points, show_plots=False)
     V_pars = load_data(fit_outputs_h5, 'global_fit_pot_set')
     x_space = np.linspace(-324, 324, 2**9)
     dx = x_space[1]-x_space[0]
     V_a, _, _ = V_potential_model(x_space, *V_pars)
     a_osc = np.sqrt(hbar/(2*pi*V_a*mass))
-    integral_kernel = 1/(3*pi**2*a_osc**4)
+    three_body_kernel = 1/(3*pi**2*a_osc**4)
+    two_body_kernel = 1/(2*pi*a_osc**2)
+    
     def compute_nx(x, mu0, T0, A_a, x0_a, dx_a, A_t, x0_t, dx_t):    
         V_anti, _, V_total = V_potential_model(x, A_a, x0_a, dx_a, A_t, x0_t, dx_t, break_LDA=True)
         f_perp = V_anti
@@ -255,105 +257,104 @@ def interpolate_yang_yang_density_and_integrate(n_points):
                                                      mass=mass, 
                                                      temperature=T0, 
                                                      chemical_potential=mui[j], 
-                                                     scatt_length=110*a0))
+                                                     scatt_length=100*a0))
         return np.array(density_profile)
-    integral, number, i = [], [], -1
-    for t in tqdm(np.linspace(0, 5, n_points)):
-        i += 1
+
+    three_body_integral, two_body_integral, number = [], [], []
+    for i, t in tqdm(enumerate(np.linspace(0, 5, n_points))):
         density = compute_nx(x_space, mus[i], Ts[i], *V_pars)
-        integral.append(np.sum(integral_kernel*density**3*dx*pix_size))
-        number.append(np.sum(density*dx*pix_size))
+        three_body_integral.append(np.trapz(three_body_kernel*density**3, dx=dx*pix_size))
+        two_body_integral.append(np.trapz(two_body_kernel*density**2, dx=dx*pix_size))
+        number.append(np.trapz(density, dx=dx*pix_size))
+
     with h5py.File(three_body_h5) as three_body:
         h5_save(three_body, 'Number', np.array(number))
-        h5_save(three_body, 'Integral', np.array(integral))
-    return None
+        h5_save(three_body, 'Two_body_integral', np.array(two_body_integral))
+        h5_save(three_body, 'Three_body_integral', np.array(three_body_integral))
 
-def integrate_number_ODE(t, Ni, Nf, K1, K3_1D):    
-    dt = t[1] - t[0]
-    integrated_number = np.zeros_like(t)
-    K3_1D = np.abs(K3_1D)
-    K1 = np.abs(K1)
-    for i, time_lim in enumerate(t):
-        integrated_number[i] = (Ni - K1*np.sum(dt*yy_interpolated_numbers[0:i]) -  
-                                K3_1D*np.sum(dt*yy_interpolated_integrals[0:i]))
-    integrated_number += Nf
-    return integrated_number
+def f(t, K1, K2, K3):
+    one = load_data(three_body_h5, 'Number')
+    two = load_data(three_body_h5, 'Two_body_integral')
+    three = load_data(three_body_h5, 'Three_body_integral')
+    order_of_mag_one = 1/one.mean()
+    yy_time = np.linspace(0 ,5, one.shape[0])
+    dt = yy_time[1]-yy_time[0]
+    truncated_one = one[np.where(yy_time <= t)]
+    truncated_two = two[np.where(yy_time <= t)]
+    truncated_three = three[np.where(yy_time <= t)]
+    return -np.trapz(K1*1e-3*truncated_one + K2*1e-21*truncated_two + K3*1e-43*truncated_three, dx=dt)
 
+def integated_N(t, N0, Nf, K1, K2, K3):
+    N = []
+    for time in t:
+        N.append(f(time, K1, K2, K3))
+    return N0 + np.array(N)
+    
 def get_initial_condition():
     zero_time_density = load_data(processed_data_h5, 'linear_density')[0]
-    return np.sum(zero_time_density*pix_size)
+    return np.trapz(zero_time_density, dx=pix_size)
 
 def lmfit_integrate_number_ODE(tdata, Ndata, dNdata):
-    N_init = get_initial_condition()    
+    N_0 = get_initial_condition()    
     pars = Parameters()
-    pars.add('Nf', value=1, min=0., max=0.75*N_init, vary=True)
-    pars.add('N0', value=N_init, min=0.75*N_init, max=1.25*N_init, vary=True)
-    pars.add('k1', value=0.5, min=0., vary=True)
-    pars.add('k3_1D', value=6e-40, vary=True)
-    # Residuals
+    pars.add('N0', value = N_0, min = 0.75*N_0, max=1.25*N_0, vary = False)
+    pars.add('Nf', value = 1.0, min = 0.0 , max = 0.5*N_0, vary = False)
+    pars.add('k1', value = 20.0, min = 0.0, vary = True)
+    pars.add('k2', value = 0.0, min = 0.0, vary = False)
+    pars.add('k3', value = 60.0, min = 0.0, vary = True)
+
     def residuals_integrate_number_ODE(pars, tdata, Ndata, dNdata):
-        Nf = pars['Nf']
         N0 = pars['N0']
+        Nf = pars['Nf']
         k1 = pars['k1']
-        k3_1D = pars['k3_1D']
-        model = integrate_number_ODE(tdata, N0, Nf, k1, k3_1D)
+        k2 = pars['k2']
+        k3 = pars['k3']
+        model = integated_N(tdata, N0, Nf, k1, k2, k3)
         return (Ndata-model)/dNdata
+
     return minimize(residuals_integrate_number_ODE, pars, args=(tdata, Ndata, dNdata),
                     method='leastsq', nan_policy='omit')
 
-def fit_number_decay(n_points, save_fig=False):
-    time = np.linspace(0., 5., n_points)
-    # N_init = get_initial_condition()
-    result_decay = lmfit_integrate_number_ODE(time, yy_interpolated_numbers, dNdata=140)
-    report_fit(result_decay)
-    decay_pars = np.array([result_decay.params[key].value for key in result_decay.params.keys()])
-    fit_decay = integrate_number_ODE(time, *decay_pars)  
+def fit_number_decay(save_fig=False):
 
     full_density_dataset = load_data(processed_data_h5, 'linear_density')
     full_density_dataset[10, 646] = 0.
     time_realization = load_data(processed_data_h5, 'realisation_short_TOF')
-    number_set = np.array([np.sum(n*pix_size) for n in full_density_dataset])
+    number_set = np.array([np.trapz(n, dx=pix_size) for n in full_density_dataset])
 
     hold_times = np.array([time_realization[0], *time_realization[19::].tolist()])
     number = np.array([number_set[0], *number_set[19::].tolist()])
-    u_number = 200*np.ones_like(number)
+    u_number = 50*np.ones_like(number)
 
-    m_number, _, _ = model_pars_in_time(n_points, show_plots=False)
+    result_decay = lmfit_integrate_number_ODE(hold_times, number, dNdata=u_number)
+    report_fit(result_decay)
+    decay_pars = np.array([result_decay.params[key].value for key in result_decay.params.keys()])
+
+    time = np.linspace(0., 5.1, 2**8)
+    fit_decay = integated_N(time, *decay_pars)  
 
     _fig_ = plt.figure()
     ax1 = plt.subplot(111)
-    ax1.plot(time, m_number, c='C0', ls='--', lw=2.0, label='Double exponential model')
-    ax1.plot(time, fit_decay, c='k', lw=2.0, label='One-Three Body model')
-    ax1.scatter(time, yy_interpolated_numbers, s=20, c='C2', edgecolor='k', label='Interpolated YY')
-    ax1.scatter(hold_times, number, s=70, c='C3', edgecolor='k', label='Data')
-
+    ax1.plot(time, fit_decay, c='k', lw=2.0, label='One-Two-Three Body model')
+    ax1.plot(time, integated_N(time, 1539, 0.0, 120.11, 0.0, 0.0), label='K1')
+    ax1.plot(time, integated_N(time, 1539, 0.0, 0.0, 0.0, 521.6), label='K3')
+    sc1 = ax1.scatter(hold_times, number, s=70, c='C3', edgecolor='k', label='Data')
+    _, _, sc1errorcollection = ax1.errorbar(hold_times, number, xerr=0., yerr=u_number, 
+                                             marker='', ls='', zorder=0)
+    sc1errorcollection[0].set_color('k'), sc1errorcollection[1].set_color('k')
     plt.legend()
     plt.tight_layout()
     plt.show()
-    with h5py.File(three_body_h5) as three_body:
-        h5_save(three_body, 'Fit_OneThree_Body_Decay', np.array(fit_decay))
-        h5_save(three_body, 'OneThree_Body_Decay', np.array(m_number))
-        h5_save(three_body, 'decay_parameters', decay_pars)
-    return None
 
+    with h5py.File(three_body_h5) as three_body:
+        h5_save(three_body, 'Number_decay', np.array(number))
+        h5_save(three_body, 'u_number_decay', np.array(u_number))
+        h5_save(three_body, 'Fit_One_Two_Three_Body_Decay', np.array(fit_decay))
+        h5_save(three_body, 'decay_parameters', decay_pars)
 
 if __name__ == '__main__':
-    n_points = 2**8
-    # model_pars_in_time(n_points=n_points, show_plots=True)
-    try:
-        yy_interpolated_numbers = load_data(three_body_h5, 'Number')
-        yy_interpolated_integrals = load_data(three_body_h5, 'Integral')
-        try:
-            if n_points != np.size(yy_interpolated_integrals):
-                raise ValueError
-        except ValueError:
-            interpolate_yang_yang_density_and_integrate(n_points=n_points)
-            yy_interpolated_numbers = load_data(three_body_h5, 'Number')
-            yy_interpolated_integrals = load_data(three_body_h5, 'Integral')
-    except:
-        interpolate_yang_yang_density_and_integrate(n_points=n_points)
-        yy_interpolated_numbers = load_data(three_body_h5, 'Number')
-        yy_interpolated_integrals = load_data(three_body_h5, 'Integral')
-    fit_number_decay(n_points=n_points)
-    
+    # model_pars_in_time(n_points=2**8, show_plots=True)
+    # compute_interpolated_YY_quantities(n_points=2**8)
+    fit_number_decay(save_fig=False)
+
 
