@@ -218,7 +218,7 @@ def lmfit_nxT(xdata, ydata, dydata, add_to_fit, mu_guess=None, T_guess=None):
         add_T_parameter(slice_index, fix=False)  
     params.add('Shift_parameter', value=5.0, min=-10, max=10, vary=True)
     params.add('Scale_parameter', value=-0.01, vary=True)
-    params.add('Antitrap_height', value=17.64e3, min=14e3, max=24e3, vary=False)
+    params.add('Antitrap_height', value=17.64e3, min=14e3, max=24e3, vary=True)
     params.add('Antitrap_center', value=-4.7, min=-30, max=20, vary=True)
     params.add('Antitrap_width', value=2*133.2, min=200, max=450, vary=True)
     params.add('Trap_depth', value=-25.74e3, min=-80e3, max=-14e3, vary=True)
