@@ -68,7 +68,7 @@ def gaussian_blur(image, px):
     return convolve2d(image, kernel, mode='same')
 
 
-def h5_save(group, name, array):
+def h5_save(group, name, data):
     """Set a h5 dataset to the given array, replacing existing values if it
     already exists. If the arrays do not have the same shape and datatype,
     then delete the existing dataset before replaing it. This will leave
@@ -76,14 +76,14 @@ def h5_save(group, name, array):
     reclaim the disk space with h5repack. Having to do this is the main
     downside of using hdf5 for this instead of np.save/np.load/np.memmap"""
     try:
-        group[name] = array
+        group[name] = data
     except RuntimeError:
         try:
             # Try overwriting just the data if shape and dtype are compatible:
-            group[name][:] = array
+            group[name][...] = data
         except TypeError:
             del group[name]
-            group[name] = array
+            group[name] = data
             import sys
             msg = ('Warning: replacing existing h5 dataset, but disk space ' +
                    'has not been reclaimed, leaving the h5 file larger ' +
@@ -911,14 +911,36 @@ def compute_linear_density():
 
     with h5py.File(processed_data_h5) as processed_data:
 
-        # Compute the linear density of one shot for comparison with the averages
+        # Compute the linear density of a subset of shots for comparison with the averages
         # (it takes too long to compute for all shots):
+        with h5py.File(raw_data_h5, 'r') as raw_data:
+            final_dipole = raw_data['final_dipole'][:]
+            short_TOF = raw_data['short_TOF'][:]
+
+        realisation_final_dipole = processed_data['realisation_final_dipole']
+        realisation_short_TOF = processed_data['realisation_short_TOF']
+        matching_realisations = ((realisation_final_dipole[:] == final_dipole[SHOT_OF_INTEREST])
+                          & (realisation_short_TOF[:] == short_TOF[SHOT_OF_INTEREST]))
+        realisation_of_interest = np.nonzero(matching_realisations)[0][0]
+        matching_shots = ((final_dipole[:] == final_dipole[SHOT_OF_INTEREST])
+                          & (short_TOF[:] == short_TOF[SHOT_OF_INTEREST]))
+        shots_of_interest = np.nonzero(matching_shots)[0]
+
+        # Random but reproducable subset of ten:
+        np.random.seed(0)
+        shots_of_interest = np.random.choice(shots_of_interest, 10, replace=False)
+
+        h5_save(processed_data, 'realisation_of_interest', realisation_of_interest)
+        h5_save(processed_data, 'shots_of_interest', shots_of_interest)
+
         S0_individual = processed_data['max_absorption_saturation_parameter']
-        A_meas_shot_of_interest = processed_data['integrated_reconstructed_absorbed_fraction'][SHOT_OF_INTEREST]
-        linear_density_shot_of_interest = np.zeros(A_meas_shot_of_interest.shape)
-        for j in tqdm(range(A_meas_shot_of_interest.shape[0]), desc=f'  for shot {SHOT_OF_INTEREST} ...'):
-            linear_density_shot_of_interest[j] = linear_density_from_a_meas(A_meas_shot_of_interest[j], S0_individual[SHOT_OF_INTEREST, j])
-        h5_save(processed_data, 'linear_density_shot_of_interest', linear_density_shot_of_interest)
+        A_meas_individual = processed_data['integrated_reconstructed_absorbed_fraction']
+        linear_density_shots_of_interest = np.zeros((len(shots_of_interest), A_meas_individual.shape[1]))
+        for i in tqdm(range(len(shots_of_interest)), desc='  for shots of interest'):
+            shot = shots_of_interest[i]
+            for j in tqdm(range(A_meas_individual.shape[1]), desc=f'    over pixels ...'):
+                linear_density_shots_of_interest[i, j] = linear_density_from_a_meas(A_meas_individual[shot, j], S0_individual[shot, j])
+        h5_save(processed_data, 'linear_density_shots_of_interest', linear_density_shots_of_interest)
 
         # Compute linear density of averaged shots:
         S0 = processed_data['max_absorption_average_saturation_parameter']
@@ -999,10 +1021,13 @@ def plot_linear_density():
 
         outdir_linear_density = os.path.join(PROCESS_DATA_OUTDIR, 'linear_density')
         outdir_uncertainties = os.path.join(PROCESS_DATA_OUTDIR, 'u_linear_density')
+        outdir_shots_of_interest = os.path.join(PROCESS_DATA_OUTDIR, 'shots_of_interest')
         if not os.path.exists(outdir_linear_density):
             os.mkdir(outdir_linear_density)
         if not os.path.exists(outdir_uncertainties):
             os.mkdir(outdir_uncertainties)
+        if not os.path.exists(outdir_shots_of_interest):
+            os.mkdir(outdir_shots_of_interest)
 
         for i in tqdm(range(n_realisations), desc='plotting linear density'):
             plt.errorbar(range(len(linear_density[i])),
@@ -1025,39 +1050,39 @@ def plot_linear_density():
             plt.savefig(os.path.join(outdir_linear_density, f'{i:02d}.png'), dpi=300)
             plt.clf()
 
-        # Plot the linear density of the shot-of-interest:
-        linear_density_shot_of_interest = processed_data['linear_density_shot_of_interest'][:]
+        # Plot the linear density of the shots-of-interest:
+        linear_density_shots_of_interest = processed_data['linear_density_shots_of_interest'][:]
+        realisation_of_interest = processed_data['realisation_of_interest'].value
+        shots_of_interest = processed_data['shots_of_interest']
 
-        # Also plot the mean from that realisation:
-        with h5py.File(raw_data_h5, 'r') as raw_data:
-            final_dipole = raw_data['final_dipole'][:]
-            short_TOF = raw_data['short_TOF'][:]
+        for i in tqdm(range(len(linear_density_shots_of_interest)), desc='shots of interest'):
+            plt.plot(range(len(linear_density_shots_of_interest[i])),
+                         linear_density_shots_of_interest[i]/1e6, 'o', markersize=1,
+                         label='modelled single linear density')
 
-        realisation_final_dipole = processed_data['realisation_final_dipole']
-        realisation_short_TOF = processed_data['realisation_short_TOF']
-        matching_shots = ((realisation_final_dipole[:] == final_dipole[SHOT_OF_INTEREST])
-                          & (realisation_short_TOF[:] == short_TOF[SHOT_OF_INTEREST]))
-        realisation_of_interest = np.nonzero(matching_shots)[0][0]
+            plt.errorbar(range(len(linear_density[realisation_of_interest])),
+                         linear_density[realisation_of_interest]/1e6,
+                         yerr=u_linear_density[realisation_of_interest]/1e6,
+                         label='modelled average linear density',
+                         fmt='o',  markersize=0.0, capsize=1, lw=0.5)
 
-        plt.plot(range(len(linear_density_shot_of_interest)),
-                     linear_density_shot_of_interest/1e6, 'o', markersize=1,
-                     label='modelled single linear density')
+            # Compute imbalance metric: fraction of single-show points above the
+            # average points minus fraction below:
+            valid_points = ~np.isnan(linear_density_shots_of_interest[i]) # exclude NaNs
+            av = linear_density[realisation_of_interest][valid_points]
+            raw = linear_density_shots_of_interest[i][valid_points]
+            N = valid_points.sum()
+            imbalance = ((raw > av).sum() - (raw < av).sum())/N
 
-        plt.errorbar(range(len(linear_density[realisation_of_interest])),
-                     linear_density[realisation_of_interest]/1e6,
-                     yerr=u_linear_density[i]/1e6,
-                     label='modelled average linear density',
-                     fmt='o',  markersize=0.0, capsize=1, lw=0.5)
-
-
-        plt.ylabel('linear density (per um)')
-        plt.xlabel('x pixel')
-        plt.legend()
-        plt.grid(True)
-        plt.axis([0, 648, -2, 16])
-        plt.savefig(os.path.join(outdir_linear_density, f'shot_{SHOT_OF_INTEREST}.png'), dpi=300)
-        plt.clf()
-
+            plt.figtext(0.13, 0.55, f'shot {shots_of_interest[i]}')
+            plt.figtext(0.13, 0.5, r'$(N_> - N_<)/N = '+f'{imbalance:.03f}$')
+            plt.ylabel('linear density (per um)')
+            plt.xlabel('x pixel')
+            plt.legend()
+            plt.grid(True)
+            plt.axis([0, 648, -2, 16])
+            plt.savefig(os.path.join(outdir_shots_of_interest, f'shot_{shots_of_interest[i]}.png'), dpi=300)
+            plt.clf()
 
         # Plot just the uncertainties:
         for i in tqdm(range(n_realisations), desc='plotting uncertainty in linear density'):
@@ -1087,7 +1112,6 @@ def plot_linear_density():
         plt.axis([-5, 12, -5, 12])
         plt.savefig(os.path.join(PROCESS_DATA_OUTDIR, 'linear_density_comparison.png'), dpi=300)
 
-
 if __name__ == '__main__':
     # save_pca_images()
     compute_mean_raw_images()
@@ -1106,6 +1130,6 @@ if __name__ == '__main__':
     compute_naive_linear_density()
     compute_naive_linear_density_uncertainty()
     compute_linear_density()
-    # plot_linear_density()
+    plot_linear_density()
 
     
