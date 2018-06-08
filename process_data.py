@@ -2,7 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import h5py
-from scipy.ndimage.filters import uniform_filter
+from scipy.ndimage.filters import uniform_filter1d
 from tqdm import tqdm
 from image_reconstruction.cpu_reconstructor import CPUReconstructor
 
@@ -663,7 +663,7 @@ def reconstruct_absorbed_fraction():
             matching_shots = (final_dipole == dipole_val) & (short_TOF == tof_val)
             u_integrated_reconstructed_average_absorbed_fraction[i] = integrated_reconstructed_absorbed_fraction[matching_shots, :].std(axis=0) / np.sqrt(matching_shots.sum())
             # 10px smoothing on the uncertainty in integrated absorbed fraction:
-            u_integrated_reconstructed_average_absorbed_fraction[i] = uniform_filter(u_integrated_reconstructed_average_absorbed_fraction[i], size=10)
+            u_integrated_reconstructed_average_absorbed_fraction[i] = uniform_filter1d(u_integrated_reconstructed_average_absorbed_fraction[i], size=10)
 
         # Save everything
         h5_save(processed_data, 'reconstructed_absorbed_fraction_ROI', reconstructed_absorbed_fraction_ROI)
@@ -987,8 +987,8 @@ def compute_naive_linear_density_uncertainty():
         for i, (tof_val, dipole_val) in tqdm(enumerate(realisations), total=n_realisations, desc='  computing standard deviations'):
             matching_shots = (final_dipole == dipole_val) & (short_TOF == tof_val)
             u_A[i] = reconstructed_absorbed_fraction_ROI[matching_shots, :, :].std(axis=0) / np.sqrt(matching_shots.sum())
-            # 10px smoothing on u_A:
-            u_A[i] = uniform_filter(u_A[i], size=10)
+            # 10px smoothing on u_A in x direction:
+            u_A[i] = uniform_filter1d(u_A[i], size=10, axis=1)
 
         outdir_uA = os.path.join(PROCESS_DATA_OUTDIR, 'uncertainty_absorbed_fraction')
         if not os.path.exists(outdir_uA):
