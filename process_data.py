@@ -700,6 +700,144 @@ def reconstruct_absorbed_fraction():
             plt.clf()
 
 
+def check_absorbed_fractions_alignment():
+    """Compute the average integrated (reconstructed) absorbed fractions again, but this
+    time offset the data being averaged horizontally in order to align their centres, as
+    determined by a Gaussian fit. This is to check that the individual shots are aligned
+    with each other, or if not, by how much they vary in alignment."""
+
+    outdir_alignment = os.path.join(PROCESS_DATA_OUTDIR, 'alignment')
+    if not os.path.exists(outdir_alignment):
+        os.mkdir(outdir_alignment)
+
+    outdir_alignment_all = os.path.join(PROCESS_DATA_OUTDIR, 'alignment_all')
+    if not os.path.exists(outdir_alignment_all):
+        os.mkdir(outdir_alignment_all)
+
+
+    with h5py.File(raw_data_h5, 'r') as raw_data:
+        final_dipole = raw_data['final_dipole'][:]
+        short_TOF = raw_data['short_TOF'][:]
+
+    with h5py.File(processed_data_h5) as processed_data:
+        shots = processed_data['integrated_reconstructed_absorbed_fraction'][:]
+        averages = processed_data['integrated_reconstructed_average_absorbed_fraction'][:]
+        averages_uncertainty = processed_data['u_integrated_reconstructed_average_absorbed_fraction'][:]
+
+        def gaussian(x, x0, A, sigma):
+            return A*np.exp(-(x - x0)**2 / (2*sigma**2))
+
+        def fit_gaussian(x, y, u_y):
+            from scipy.optimize import curve_fit
+            params, covariance = curve_fit(gaussian, x, y, [x.max()/2, y[int(x.max()/2)], x.max()/5], maxfev=10000)
+            return params, covariance
+
+        all_offsets = []
+        all_offsets_in_uncertainty_units = []
+
+        for i, (tof_val, dipole_val) in tqdm(enumerate(realisations), total=n_realisations, desc='  aligning single shots'):
+            matching_shots = shots[(final_dipole == dipole_val) & (short_TOF == tof_val), :]
+            matching_shot_indices = np.array(range(len(shots)))[(final_dipole == dipole_val) & (short_TOF == tof_val)]
+            average_shot = averages[i]
+            u_average_shot = averages_uncertainty[i]
+            u_individual_shot = u_average_shot * np.sqrt(len(matching_shots))
+            x = np.arange(len(average_shot))
+            (average_x0, average_A, average_sigma), _ = fit_gaussian(x, average_shot, u_average_shot)
+
+            aligned_shots = np.zeros_like(matching_shots)
+
+            offsets = np.zeros(len(matching_shots))
+
+            for j, shot in enumerate(matching_shots):
+
+                (x0, A, sigma), cov = fit_gaussian(x, shot, u_individual_shot)
+
+                u_x0 = np.sqrt(cov[0,0])
+
+                displacement_in_units_of_uncertainty = (average_x0 - x0)/u_x0
+                # print(displacement_in_units_of_uncertainty)
+                all_offsets_in_uncertainty_units.append(displacement_in_units_of_uncertainty)
+
+                offset_pixels = int(round(average_x0 - x0))
+                # offset_pixels = int(round(np.random.randn()*40))
+                offset_shot = np.roll(shot, offset_pixels)
+
+                offsets[j] = offset_pixels
+                all_offsets.append(offset_pixels)
+                if offset_pixels > 0:
+                    offset_shot[:offset_pixels] = 0
+                elif offset_pixels < 0:
+                    offset_shot[offset_pixels:] = 0
+
+                aligned_shots[j] = offset_shot
+
+                # print(offset_pixels)
+
+                offset_x0, offset_A, offset_sigma = fit_gaussian(x, offset_shot, u_individual_shot)
+
+                plt.plot(x, shot*1e6, 'bo', markersize=1, label='single shot')
+                plt.plot(x, offset_shot*1e6, 'ro', markersize=1, label='offset single shot')
+                plt.plot(x, average_shot*1e6, 'ko', markersize=1, label='average')
+                
+
+                plt.plot(x, gaussian(x, average_x0, average_A, average_sigma)*1e6, 'k-')
+                plt.plot(x, gaussian(x, x0, A, sigma)*1e6, 'b-')
+                plt.plot(x, gaussian(x, offset_x0, offset_A, offset_sigma)*1e6, 'r-')
+                plt.axvline(average_x0, color='k')
+                plt.axvline(x0, color='b')
+                plt.axvline(offset_x0, color='r')
+                plt.axis(ymin=-.5, ymax=1)
+                plt.legend()
+                plt.ylabel(r'integrated absorbed fraction ($\mu$m)')
+                raw_shot_no = matching_shot_indices[j]
+                plt.savefig(os.path.join(outdir_alignment_all, f'{raw_shot_no:04d}.png'))
+                # plt.show()
+                plt.clf()
+
+
+            aligned_average = aligned_shots.mean(axis=0)
+            u_aligned_average = aligned_shots.std(axis=0) / np.sqrt(len(matching_shots))
+
+            # aligned_x0, aligned_A, aligned_sigma = fit_gaussian(x, aligned_average, u_aligned_average)
+
+            plt.plot(x, average_shot*1e6, 'o', markersize=1, label='original')
+            plt.plot(x, aligned_average*1e6, 'o', markersize=1, label='aligned')
+
+            plt.axis(ymin=-.5, ymax=1)
+            plt.legend()
+            plt.ylabel(r'integrated absorbed fraction ($\mu$m)')
+            plt.figtext(0.15, 0.8, f"final_dipole: {dipole_val}\n short_tof: {tof_val}")
+            # plt.show()
+            plt.savefig(os.path.join(outdir_alignment, f'absorbed_{i:04d}.png'))
+
+            plt.clf()
+            plt.hist(offsets, bins=np.arange(-20.5, 20.5))
+            plt.figtext(0.15, 0.8, f"final_dipole: {dipole_val}\n short_tof: {tof_val}")
+            plt.xlabel('offset (pixels)')
+            plt.ylabel('count')
+            plt.savefig(os.path.join(outdir_alignment, f'offsets_{i:04d}.png'))
+            plt.clf()
+            # plt.show()
+
+        all_offsets = np.array(all_offsets)
+        plt.hist(all_offsets, bins=np.arange(-20.5, 20.5))
+        plt.figtext(0.15, 0.8, fR"$\mu={all_offsets[abs(all_offsets) < 50].mean():.2f}$" + '\n' + 
+                               fR"$\sigma={all_offsets[abs(all_offsets) < 50].std():.2f}$")
+        plt.xlabel('offset (pixels)')
+        plt.ylabel('count')
+        plt.savefig(os.path.join(outdir_alignment, f'all_offsets.png'))
+        plt.clf()
+
+        all_offsets_in_uncertainty_units = np.array(all_offsets_in_uncertainty_units)
+        plt.hist(all_offsets_in_uncertainty_units, bins=np.arange(-3, 3, .1))
+        plt.figtext(0.15, 0.8, fR"$\mu={all_offsets_in_uncertainty_units[abs(all_offsets_in_uncertainty_units) < 50].mean():.2f}$" + '\n' + 
+                               fR"$\sigma={all_offsets_in_uncertainty_units[abs(all_offsets_in_uncertainty_units) < 50].std():.2f}$")
+        plt.xlabel('offset/uncertainty in fit centre')
+        plt.ylabel('count')
+        plt.savefig(os.path.join(outdir_alignment, f'all_offsets_uncertainties.png'))
+        plt.clf()
+
+
 def plot_reconstructed_absorbed_fraction():
     """Plot the individual reconstructed absorbed fractions, pre-averaging. A separate function to 
     plotting the averaged ones since there are many images, so it is slower."""
@@ -1124,6 +1262,7 @@ if __name__ == '__main__':
     # plot_OD_and_absorption_and_saturation_parameter()
     compute_averages()
     reconstruct_absorbed_fraction()
+    # check_absorbed_fractions_alignment()
     # plot_reconstructed_absorbed_fraction()
     compute_max_absorption_saturation_parameter()
     compute_reconstructed_naive_average_OD()
